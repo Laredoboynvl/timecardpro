@@ -1,0 +1,491 @@
+"use client"
+
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
+import { Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle2, X, Edit2 } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useToast } from "@/hooks/use-toast"
+import * as XLSX from "xlsx"
+
+export interface BulkEmployeeData {
+  employee_number: string
+  name: string
+  hire_date: string | Date
+  position?: string
+  row?: number
+}
+
+interface BulkEmployeeUploadProps {
+  officeCode: string
+  officeName: string
+  onConfirm: (employees: BulkEmployeeData[]) => Promise<void>
+  onClose?: () => void
+  onCancel?: () => void
+  isTab?: boolean
+}
+
+const POSITIONS = [
+  { value: "analista", label: "Analista" },
+  { value: "supervisor", label: "Supervisor" },
+  { value: "spoc", label: "SPOC" },
+]
+
+export function BulkEmployeeUpload({ officeCode, officeName, onConfirm, onClose, onCancel, isTab = false }: BulkEmployeeUploadProps) {
+  const [open, setOpen] = useState(onClose && !isTab ? true : false)
+  const [file, setFile] = useState<File | null>(null)
+  const [employees, setEmployees] = useState<BulkEmployeeData[]>([])
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+  const [errors, setErrors] = useState<string[]>([])
+  const { toast } = useToast()
+
+  // Función para descargar la plantilla Excel
+  const downloadTemplate = () => {
+    // Crear datos de ejemplo
+    const templateData = [
+      {
+        "Número de Empleado": `${officeCode.toUpperCase()}-0001`,
+        "Nombre Completo": "Juan Pérez González",
+        "Fecha de Ingreso (DD/MM/YYYY)": "15/03/2020",
+      },
+      {
+        "Número de Empleado": `${officeCode.toUpperCase()}-0002`,
+        "Nombre Completo": "María López Martínez",
+        "Fecha de Ingreso (DD/MM/YYYY)": "20/06/2019",
+      },
+      {
+        "Número de Empleado": `${officeCode.toUpperCase()}-0003`,
+        "Nombre Completo": "Carlos Rodríguez Silva",
+        "Fecha de Ingreso (DD/MM/YYYY)": "10/01/2021",
+      },
+    ]
+
+    // Crear libro de Excel
+    const ws = XLSX.utils.json_to_sheet(templateData)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Empleados")
+
+    // Ajustar ancho de columnas
+    ws["!cols"] = [{ wch: 20 }, { wch: 30 }, { wch: 30 }]
+
+    // Descargar archivo
+    XLSX.writeFile(wb, `Plantilla_Empleados_${officeCode.toUpperCase()}.xlsx`)
+
+    toast({
+      title: "Plantilla descargada",
+      description: "Llena la plantilla con los datos de tus empleados",
+    })
+  }
+
+  // Función para procesar el archivo Excel
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const uploadedFile = e.target.files?.[0]
+    if (!uploadedFile) return
+
+    setFile(uploadedFile)
+    setErrors([])
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      try {
+        const data = new Uint8Array(event.target?.result as ArrayBuffer)
+        const workbook = XLSX.read(data, { type: "array" })
+        const sheetName = workbook.SheetNames[0]
+        const worksheet = workbook.Sheets[sheetName]
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false })
+
+        // Procesar datos
+        const processedEmployees: BulkEmployeeData[] = []
+        const newErrors: string[] = []
+
+        jsonData.forEach((row: any, index: number) => {
+          const rowNumber = index + 2 // +2 porque Excel empieza en 1 y hay header
+
+          // Validar campos requeridos
+          const employeeNumber = row["Número de Empleado"]?.toString().trim()
+          const name = row["Nombre Completo"]?.toString().trim()
+          const hireDateStr = row["Fecha de Ingreso (DD/MM/YYYY)"]?.toString().trim()
+
+          if (!employeeNumber) {
+            newErrors.push(`Fila ${rowNumber}: Falta número de empleado`)
+            return
+          }
+
+          if (!name) {
+            newErrors.push(`Fila ${rowNumber}: Falta nombre completo`)
+            return
+          }
+
+          if (!hireDateStr) {
+            newErrors.push(`Fila ${rowNumber}: Falta fecha de ingreso`)
+            return
+          }
+
+          // Parsear fecha DD/MM/YYYY
+          let hireDate: Date
+          try {
+            const [day, month, year] = hireDateStr.split("/")
+            hireDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+            
+            if (isNaN(hireDate.getTime())) {
+              throw new Error("Fecha inválida")
+            }
+          } catch {
+            newErrors.push(`Fila ${rowNumber}: Formato de fecha inválido (use DD/MM/YYYY)`)
+            return
+          }
+
+          processedEmployees.push({
+            employee_number: employeeNumber,
+            name: name,
+            hire_date: hireDate,
+            position: "analista", // Por defecto
+            row: rowNumber,
+          })
+        })
+
+        setErrors(newErrors)
+        setEmployees(processedEmployees)
+
+        if (processedEmployees.length > 0) {
+          setShowPreview(true)
+        }
+
+        if (newErrors.length > 0) {
+          toast({
+            title: "Errores encontrados",
+            description: `Se encontraron ${newErrors.length} error(es) en el archivo`,
+            variant: "destructive",
+          })
+        } else {
+          toast({
+            title: "Archivo procesado",
+            description: `${processedEmployees.length} empleado(s) listos para importar`,
+          })
+        }
+      } catch (error) {
+        console.error("Error procesando archivo:", error)
+        toast({
+          title: "Error",
+          description: "No se pudo procesar el archivo Excel",
+          variant: "destructive",
+        })
+      }
+    }
+
+    reader.readAsArrayBuffer(uploadedFile)
+  }
+
+  // Función para actualizar un empleado
+  const updateEmployee = (index: number, field: keyof BulkEmployeeData, value: any) => {
+    const updated = [...employees]
+    updated[index] = { ...updated[index], [field]: value }
+    setEmployees(updated)
+  }
+
+  // Función para eliminar un empleado
+  const removeEmployee = (index: number) => {
+    setEmployees(employees.filter((_, i) => i !== index))
+  }
+
+  // Función para confirmar y guardar
+  const handleConfirm = async () => {
+    if (employees.length === 0) {
+      toast({
+        title: "Sin datos",
+        description: "No hay empleados para importar",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsProcessing(true)
+
+    try {
+      await onConfirm(employees)
+      
+      toast({
+        title: "Importación exitosa",
+        description: `Se importaron ${employees.length} empleado(s) correctamente`,
+      })
+
+      // Limpiar estado
+      setFile(null)
+      setEmployees([])
+      setShowPreview(false)
+      setErrors([])
+      setOpen(false)
+      
+      // Llamar a onClose si existe
+      if (onClose) {
+        onClose()
+      }
+    } catch (error) {
+      console.error("Error guardando empleados:", error)
+      toast({
+        title: "Error",
+        description: "No se pudieron guardar los empleados",
+        variant: "destructive",
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // Función para formatear fecha
+  const formatDate = (date: Date | string): string => {
+    if (typeof date === "string") {
+      date = new Date(date)
+    }
+    return date.toLocaleDateString("es-MX", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    })
+  }
+
+  const handleOpenChange = (newOpen: boolean) => {
+    setOpen(newOpen)
+    if (!newOpen && onClose) {
+      onClose()
+    }
+  }
+
+  // Contenido del formulario (usado tanto en dialog como en tab)
+  const renderFormContent = () => (
+    <div className="space-y-6">
+          {/* Paso 1: Descargar plantilla */}
+          <div className="space-y-2">
+            <Label className="text-base font-semibold">Paso 1: Descargar Plantilla</Label>
+            <Button onClick={downloadTemplate} variant="outline" className="w-full">
+              <Download className="mr-2 h-4 w-4" />
+              Descargar Plantilla Excel
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              Descarga la plantilla con el formato correcto para capturar tus empleados
+            </p>
+          </div>
+
+          {/* Paso 2: Subir archivo */}
+          <div className="space-y-2">
+            <Label className="text-base font-semibold">Paso 2: Subir Archivo</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleFileUpload}
+                className="cursor-pointer"
+              />
+              {file && <Badge variant="secondary">{file.name}</Badge>}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Sube el archivo Excel con los datos de tus empleados (formato: .xlsx o .xls)
+            </p>
+          </div>
+
+          {/* Errores */}
+          {errors.length > 0 && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <div className="font-semibold mb-2">Se encontraron {errors.length} error(es):</div>
+                <ul className="list-disc pl-5 space-y-1">
+                  {errors.slice(0, 5).map((error, index) => (
+                    <li key={index} className="text-sm">
+                      {error}
+                    </li>
+                  ))}
+                  {errors.length > 5 && (
+                    <li className="text-sm font-semibold">... y {errors.length - 5} error(es) más</li>
+                  )}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Vista previa y edición */}
+          {showPreview && employees.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-semibold">
+                  Paso 3: Revisar y Editar ({employees.length} empleado{employees.length !== 1 ? "s" : ""})
+                </Label>
+                <Badge variant="secondary">
+                  <CheckCircle2 className="mr-1 h-3 w-3" />
+                  Listos para importar
+                </Badge>
+              </div>
+
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[150px]">Número</TableHead>
+                      <TableHead>Nombre Completo</TableHead>
+                      <TableHead className="w-[150px]">Puesto</TableHead>
+                      <TableHead className="w-[130px]">Fecha Ingreso</TableHead>
+                      <TableHead className="w-[80px]">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {employees.map((emp, index) => (
+                      <TableRow key={index}>
+                        <TableCell>
+                          <Input
+                            value={emp.employee_number}
+                            onChange={(e) => updateEmployee(index, "employee_number", e.target.value)}
+                            className="h-8"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            value={emp.name}
+                            onChange={(e) => updateEmployee(index, "name", e.target.value)}
+                            className="h-8"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Select
+                            value={emp.position || "analista"}
+                            onValueChange={(value) => updateEmployee(index, "position", value)}
+                          >
+                            <SelectTrigger className="h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {POSITIONS.map((pos) => (
+                                <SelectItem key={pos.value} value={pos.value}>
+                                  {pos.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="date"
+                            value={
+                              emp.hire_date instanceof Date
+                                ? emp.hire_date.toISOString().split("T")[0]
+                                : new Date(emp.hire_date).toISOString().split("T")[0]
+                            }
+                            onChange={(e) => updateEmployee(index, "hire_date", new Date(e.target.value))}
+                            className="h-8"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeEmployee(index)}
+                            className="h-8 w-8"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+        </div>
+    )
+  }
+
+  // Si es una pestaña, renderizar como Card
+  if (isTab) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <FileSpreadsheet className="h-5 w-5" />
+              Carga Masiva de Empleados
+            </h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Descarga la plantilla, llénala con los datos de tus empleados y súbela para importar múltiples empleados a la vez
+            </p>
+          </div>
+        </div>
+
+        {renderFormContent()}
+
+        {/* Botones de acción para Tab */}
+        <div className="flex justify-end gap-2 pt-4 border-t">
+          <Button variant="outline" onClick={onCancel} disabled={isProcessing}>
+            <X className="mr-2 h-4 w-4" />
+            Cancelar
+          </Button>
+          {showPreview && employees.length > 0 && (
+            <Button onClick={handleConfirm} disabled={isProcessing}>
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              {isProcessing ? "Guardando..." : `Confirmar e Importar ${employees.length} Empleado(s)`}
+            </Button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Si es un modal, renderizar como Dialog
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      {!onClose && (
+        <DialogTrigger asChild>
+          <Button variant="outline">
+            <Upload className="mr-2 h-4 w-4" />
+            Carga Masiva
+          </Button>
+        </DialogTrigger>
+      )}
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileSpreadsheet className="h-5 w-5" />
+            Carga Masiva de Empleados - {officeName}
+          </DialogTitle>
+          <DialogDescription>
+            Descarga la plantilla, llénala con los datos de tus empleados y súbela para importar múltiples empleados
+            a la vez
+          </DialogDescription>
+        </DialogHeader>
+
+        {renderFormContent()}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isProcessing}>
+            Cancelar
+          </Button>
+          {showPreview && employees.length > 0 && (
+            <Button onClick={handleConfirm} disabled={isProcessing}>
+              {isProcessing ? "Guardando..." : `Confirmar e Importar ${employees.length} Empleado(s)`}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
