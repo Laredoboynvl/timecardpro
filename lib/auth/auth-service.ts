@@ -28,7 +28,7 @@ export class AuthService {
       // En un entorno real, esto debería verificar contra la base de datos
       
       // Contraseña simple por defecto para todas las oficinas
-      const validPassword = 'admin123'
+      const validPassword = 'csramexico2025'
       
       if (credentials.password !== validPassword) {
         throw new Error('Contraseña incorrecta')

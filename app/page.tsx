@@ -174,10 +174,6 @@ export default function Home() {
 
                 {/* Campo de contraseña */}
                 <div className="space-y-2">
-                  <Label htmlFor="password" className="flex items-center gap-2">
-                    <Lock className="h-4 w-4" />
-                    Contraseña
-                  </Label>
                   <div className="relative">
                     <Input
                       id="password"
@@ -240,7 +236,7 @@ export default function Home() {
                   Contraseña por defecto:
                 </h4>
                 <div className="text-sm text-green-700 dark:text-green-300">
-                  <code className="bg-white dark:bg-gray-800 px-2 py-1 rounded font-mono">admin123</code>
+                  <code className="bg-white dark:bg-gray-800 px-2 py-1 rounded font-mono">csramexico2025</code>
                 </div>
                 <p className="text-xs text-green-600 dark:text-green-400 mt-2">
                   Esta contraseña funciona para todas las oficinas. Los datos están separados por oficina.
