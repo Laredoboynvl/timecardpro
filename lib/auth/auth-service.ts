@@ -24,13 +24,20 @@ export class AuthService {
    */
   public async login(credentials: LoginCredentials): Promise<AuthSession> {
     try {
-      // Simular autenticación simple por oficina
-      // En un entorno real, esto debería verificar contra la base de datos
+      // Contraseñas y roles
+      const adminPassword = 'csramexico2025'  // Acceso completo
+      const readOnlyPassword = 'csrarh2025'   // Solo lectura
       
-      // Contraseña simple por defecto para todas las oficinas
-      const validPassword = 'csramexico2025'
+      let userRole = ''
+      let userName = ''
       
-      if (credentials.password !== validPassword) {
+      if (credentials.password === adminPassword) {
+        userRole = 'admin'
+        userName = 'Administrador'
+      } else if (credentials.password === readOnlyPassword) {
+        userRole = 'viewer'
+        userName = 'Visualizador'
+      } else {
         throw new Error('Contraseña incorrecta')
       }
 
@@ -46,9 +53,9 @@ export class AuthService {
         user: {
           id: `user-${credentials.office_code}-${Date.now()}`,
           office_id: `office-${credentials.office_code}`,
-          username: 'admin',
-          role: 'admin',
-          full_name: `Administrador ${selectedOffice.name}`,
+          username: userRole,
+          role: userRole,
+          full_name: `${userName} ${selectedOffice.name}`,
           last_login: new Date().toISOString()
         },
         office: {
@@ -148,6 +155,46 @@ export class AuthService {
    */
   public isManager(): boolean {
     return this.hasRole('manager') || this.hasRole('admin')
+  }
+
+  /**
+   * Verificar si es usuario de solo lectura
+   */
+  public isViewer(): boolean {
+    return this.hasRole('viewer')
+  }
+
+  /**
+   * Verificar si puede modificar datos (crear, actualizar, eliminar)
+   */
+  public canModify(): boolean {
+    return this.hasRole('admin') || this.hasRole('manager')
+  }
+
+  /**
+   * Verificar si puede solo visualizar datos (descargar, ver)
+   */
+  public canView(): boolean {
+    return this.isAuthenticated() // Cualquier usuario autenticado puede ver
+  }
+
+  /**
+   * Obtener etiqueta del rol para mostrar en la UI
+   */
+  public getRoleLabel(): string {
+    const user = this.getCurrentUser()
+    if (!user) return ''
+    
+    switch (user.role) {
+      case 'admin':
+        return 'Administrador'
+      case 'manager':
+        return 'Gerente'
+      case 'viewer':
+        return 'Solo Lectura'
+      default:
+        return 'Usuario'
+    }
   }
 
   /**

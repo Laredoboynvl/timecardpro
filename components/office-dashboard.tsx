@@ -42,6 +42,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { Textarea } from "@/components/ui/textarea"
+import { useAuth, usePermissions } from "@/lib/hooks/useAuth"
 
 // Importar las funciones de Supabase necesarias
 import {
@@ -187,6 +188,10 @@ const detectEncoding = (buffer: ArrayBuffer): string => {
 
 // Modificar la función OfficeDashboard para usar los empleados iniciales
 export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }: OfficeDashboardProps) {
+  // Hooks de autenticación y permisos
+  const { user, roleLabel, canModify, canView, isViewer } = useAuth()
+  const permissions = usePermissions()
+
   // Actualizar el estado inicial de empleados
   const [employees, setEmployees] = useState<Employee[]>(initialEmployees)
 
@@ -1830,11 +1835,31 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
 
   return (
     <div className="space-y-6">
+      {isViewer && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+          <div className="flex items-center gap-2">
+            <Eye className="h-4 w-4 text-amber-600" />
+            <span className="text-amber-800">
+              <strong>Modo Solo Lectura:</strong> Conectado como {roleLabel}. 
+              Puedes visualizar y descargar datos, pero no modificar información.
+            </span>
+          </div>
+        </div>
+      )}
       <div className="flex flex-col space-y-2">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-3xl font-bold">Dashboard de {officeName}</h2>
             <p className="text-sm text-muted-foreground">País: México</p>
+            {user && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
+                <User className="h-4 w-4" />
+                <span>{user.full_name}</span>
+                <span className="text-xs bg-muted px-2 py-1 rounded">
+                  {roleLabel}
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setExportModalOpen(true)}>
@@ -2470,13 +2495,14 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
               </DialogContent>
             </Dialog>
 
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button className="ml-auto">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Nuevo Empleado
-                </Button>
-              </DialogTrigger>
+            {permissions.canCreateEmployee && (
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button className="ml-auto">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Nuevo Empleado
+                  </Button>
+                </DialogTrigger>
               <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
                   <DialogTitle>Agregar Empleados</DialogTitle>
@@ -2846,6 +2872,7 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+            )}
           </div>
         </div>
       </div>
