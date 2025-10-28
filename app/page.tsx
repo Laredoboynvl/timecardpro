@@ -157,7 +157,6 @@ export default function Home() {
                           </div>
                           <div className="text-left">
                             <div className="font-medium">SPOC</div>
-                            <div className="text-xs text-muted-foreground">Acceso completo - Crear, editar, eliminar</div>
                           </div>
                         </div>
                       </SelectItem>
@@ -168,7 +167,6 @@ export default function Home() {
                           </div>
                           <div className="text-left">
                             <div className="font-medium">Recursos Humanos</div>
-                            <div className="text-xs text-muted-foreground">Solo lectura - Ver, consultar, descargar</div>
                           </div>
                         </div>
                       </SelectItem>
