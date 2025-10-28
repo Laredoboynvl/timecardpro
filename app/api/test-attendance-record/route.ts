@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClientSupabaseClient } from '@/lib/supabase/client'
 
 export async function POST(request: NextRequest) {
   try {
@@ -7,7 +6,22 @@ export async function POST(request: NextRequest) {
     
     console.log("API recibió datos:", recordData)
     
-    const supabase = createClientSupabaseClient()
+    // Verificar variables de entorno
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return NextResponse.json({
+        success: false,
+        error: {
+          message: 'Variables de entorno de Supabase no configuradas'
+        }
+      }, { status: 500 })
+    }
+    
+    // Importar dinámicamente para evitar errores de build
+    const { createClient } = await import('@supabase/supabase-js')
+    const supabase = createClient(supabaseUrl, supabaseAnonKey)
     
     console.log("Cliente Supabase creado en API")
     
