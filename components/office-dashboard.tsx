@@ -189,7 +189,7 @@ const detectEncoding = (buffer: ArrayBuffer): string => {
 // Modificar la función OfficeDashboard para usar los empleados iniciales
 export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }: OfficeDashboardProps) {
   // Hooks de autenticación y permisos
-  const { user, roleLabel, canModify, canView, isViewer } = useAuth()
+  const { user, roleLabel, canModify, canView, isSPOC, isRH } = useAuth()
   const permissions = usePermissions()
 
   // Actualizar el estado inicial de empleados
@@ -1835,13 +1835,13 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
 
   return (
     <div className="space-y-6">
-      {isViewer && (
+      {isRH && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
           <div className="flex items-center gap-2">
             <Eye className="h-4 w-4 text-amber-600" />
             <span className="text-amber-800">
-              <strong>Modo Solo Lectura:</strong> Conectado como {roleLabel}. 
-              Puedes visualizar y descargar datos, pero no modificar información.
+              <strong>Usuario Recursos Humanos:</strong> Conectado como {roleLabel}. 
+              Puedes visualizar, consultar y descargar datos, pero no crear, modificar o eliminar información.
             </span>
           </div>
         </div>

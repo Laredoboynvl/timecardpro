@@ -9,9 +9,9 @@ interface PermissionAlertProps {
 }
 
 export function PermissionAlert({ className = '' }: PermissionAlertProps) {
-  const { isViewer, roleLabel, user } = useAuth()
+  const { isRH, roleLabel, user } = useAuth()
 
-  if (!isViewer) {
+  if (!isRH) {
     return null
   }
 
@@ -21,8 +21,8 @@ export function PermissionAlert({ className = '' }: PermissionAlertProps) {
       <AlertDescription className="flex items-center gap-2">
         <Shield className="h-4 w-4 text-amber-600" />
         <span className="text-amber-800">
-          <strong>Modo Solo Lectura:</strong> Conectado como {roleLabel}. 
-          Puedes visualizar y descargar datos, pero no modificar información.
+          <strong>Usuario Recursos Humanos:</strong> Conectado como {roleLabel}. 
+          Puedes visualizar, consultar y descargar datos, pero no crear, modificar o eliminar información.
         </span>
       </AlertDescription>
     </Alert>

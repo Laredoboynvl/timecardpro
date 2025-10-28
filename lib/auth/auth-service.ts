@@ -20,25 +20,29 @@ export class AuthService {
   }
 
   /**
-   * Autenticar usuario con credenciales de oficina (solo contraseña)
+   * Autenticar usuario con credenciales de oficina (contraseña + tipo de usuario)
    */
   public async login(credentials: LoginCredentials): Promise<AuthSession> {
     try {
-      // Contraseñas y roles
-      const adminPassword = 'csramexico2025'  // Acceso completo
-      const readOnlyPassword = 'csrarh2025'   // Solo lectura
+      // Contraseña única para ambos tipos de usuario
+      const validPassword = 'csramexico2025'
       
+      if (credentials.password !== validPassword) {
+        throw new Error('Contraseña incorrecta')
+      }
+
+      // Verificar tipo de usuario seleccionado
       let userRole = ''
       let userName = ''
       
-      if (credentials.password === adminPassword) {
-        userRole = 'admin'
-        userName = 'Administrador'
-      } else if (credentials.password === readOnlyPassword) {
-        userRole = 'viewer'
-        userName = 'Visualizador'
+      if (credentials.userType === 'spoc') {
+        userRole = 'spoc'
+        userName = 'SPOC'
+      } else if (credentials.userType === 'rh') {
+        userRole = 'rh'
+        userName = 'Recursos Humanos'
       } else {
-        throw new Error('Contraseña incorrecta')
+        throw new Error('Tipo de usuario no válido')
       }
 
       // Buscar información de la oficina
@@ -144,31 +148,24 @@ export class AuthService {
   }
 
   /**
-   * Verificar si es admin
+   * Verificar si es SPOC (acceso completo)
    */
-  public isAdmin(): boolean {
-    return this.hasRole('admin')
+  public isSPOC(): boolean {
+    return this.hasRole('spoc')
   }
 
   /**
-   * Verificar si es manager
+   * Verificar si es Recursos Humanos (solo lectura)
    */
-  public isManager(): boolean {
-    return this.hasRole('manager') || this.hasRole('admin')
-  }
-
-  /**
-   * Verificar si es usuario de solo lectura
-   */
-  public isViewer(): boolean {
-    return this.hasRole('viewer')
+  public isRH(): boolean {
+    return this.hasRole('rh')
   }
 
   /**
    * Verificar si puede modificar datos (crear, actualizar, eliminar)
    */
   public canModify(): boolean {
-    return this.hasRole('admin') || this.hasRole('manager')
+    return this.hasRole('spoc') // Solo SPOC puede modificar
   }
 
   /**
@@ -179,6 +176,48 @@ export class AuthService {
   }
 
   /**
+   * Verificar si puede crear empleados
+   */
+  public canCreateEmployee(): boolean {
+    return this.hasRole('spoc')
+  }
+
+  /**
+   * Verificar si puede editar empleados
+   */
+  public canEditEmployee(): boolean {
+    return this.hasRole('spoc')
+  }
+
+  /**
+   * Verificar si puede eliminar empleados
+   */
+  public canDeleteEmployee(): boolean {
+    return this.hasRole('spoc')
+  }
+
+  /**
+   * Verificar si puede manejar asistencias (marcar, editar)
+   */
+  public canManageAttendance(): boolean {
+    return this.hasRole('spoc')
+  }
+
+  /**
+   * Verificar si puede gestionar vacaciones
+   */
+  public canManageVacations(): boolean {
+    return this.hasRole('spoc')
+  }
+
+  /**
+   * Verificar si puede exportar/descargar datos
+   */
+  public canExportData(): boolean {
+    return this.isAuthenticated() // Ambos pueden exportar
+  }
+
+  /**
    * Obtener etiqueta del rol para mostrar en la UI
    */
   public getRoleLabel(): string {
@@ -186,12 +225,10 @@ export class AuthService {
     if (!user) return ''
     
     switch (user.role) {
-      case 'admin':
-        return 'Administrador'
-      case 'manager':
-        return 'Gerente'
-      case 'viewer':
-        return 'Solo Lectura'
+      case 'spoc':
+        return 'SPOC'
+      case 'rh':
+        return 'Recursos Humanos'
       default:
         return 'Usuario'
     }

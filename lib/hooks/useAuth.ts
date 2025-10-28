@@ -7,12 +7,12 @@ interface UseAuthReturn {
   user: OfficeUser | null
   office: Office | null
   session: AuthSession | null
-  isAdmin: boolean
-  isViewer: boolean
+  isSPOC: boolean
+  isRH: boolean
   canModify: boolean
   canView: boolean
   roleLabel: string
-  login: (credentials: { office_code: string; password: string }) => Promise<AuthSession>
+  login: (credentials: { office_code: string; password: string; userType: 'spoc' | 'rh' }) => Promise<AuthSession>
   logout: () => void
   renewSession: () => void
 }
@@ -40,7 +40,7 @@ export function useAuth(): UseAuthReturn {
     return () => clearInterval(interval)
   }, [])
 
-  const login = async (credentials: { office_code: string; password: string }) => {
+  const login = async (credentials: { office_code: string; password: string; userType: 'spoc' | 'rh' }) => {
     try {
       const newSession = await authService.login(credentials)
       setSession(newSession)
@@ -70,8 +70,8 @@ export function useAuth(): UseAuthReturn {
     user: session?.user || null,
     office: session?.office || null,
     session,
-    isAdmin: authService.isAdmin(),
-    isViewer: authService.isViewer(),
+    isSPOC: authService.isSPOC(),
+    isRH: authService.isRH(),
     canModify: authService.canModify(),
     canView: authService.canView(),
     roleLabel: authService.getRoleLabel(),
@@ -86,18 +86,32 @@ export function usePermissions() {
   const auth = useAuth()
 
   return {
-    canCreateEmployee: auth.canModify,
-    canEditEmployee: auth.canModify,
-    canDeleteEmployee: auth.canModify,
-    canMarkAttendance: auth.canModify,
-    canEditAttendance: auth.canModify,
-    canDeleteAttendance: auth.canModify,
-    canManageVacations: auth.canModify,
-    canApproveVacations: auth.canModify,
+    // Permisos de empleados - Solo SPOC
+    canCreateEmployee: auth.isSPOC,
+    canEditEmployee: auth.isSPOC,
+    canDeleteEmployee: auth.isSPOC,
+    
+    // Permisos de asistencia - Solo SPOC
+    canMarkAttendance: auth.isSPOC,
+    canEditAttendance: auth.isSPOC,
+    canDeleteAttendance: auth.isSPOC,
+    
+    // Permisos de vacaciones - Solo SPOC
+    canManageVacations: auth.isSPOC,
+    canApproveVacations: auth.isSPOC,
+    canCreateVacations: auth.isSPOC,
+    canDeleteVacations: auth.isSPOC,
+    
+    // Permisos de visualización - Ambos
     canViewReports: auth.canView,
     canExportData: auth.canView,
     canViewEmployees: auth.canView,
     canViewAttendance: auth.canView,
-    canViewVacations: auth.canView
+    canViewVacations: auth.canView,
+    canDownloadData: auth.canView,
+    
+    // Información de usuario
+    userType: auth.isSPOC ? 'SPOC' : 'RH',
+    isReadOnly: auth.isRH
   }
 }

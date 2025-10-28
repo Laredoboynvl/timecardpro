@@ -10,13 +10,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Building, Lock, LogIn, Eye, EyeOff, MapPin } from "lucide-react"
 import { OFFICES } from "@/lib/types/auth"
-import { useAuth } from "@/hooks/use-auth"
+import { useAuth } from "@/lib/hooks/useAuth"
 
 export default function Home() {
   const router = useRouter()
-  const { login, isAuthenticated, isLoading } = useAuth()
+  const { login, isAuthenticated } = useAuth()
 
   const [selectedOffice, setSelectedOffice] = useState('')
+  const [userType, setUserType] = useState<'spoc' | 'rh'>('spoc')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
@@ -24,11 +25,11 @@ export default function Home() {
 
   // Redirigir si ya está autenticado
   useEffect(() => {
-    if (isAuthenticated && !isLoading) {
+    if (isAuthenticated) {
       const officeCode = selectedOffice || 'TIJ' // Default a Tijuana
       router.push(`/dashboard/${officeCode.toLowerCase()}`)
     }
-  }, [isAuthenticated, isLoading, router, selectedOffice])
+  }, [isAuthenticated, router, selectedOffice])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -46,7 +47,8 @@ export default function Home() {
 
       await login({
         office_code: selectedOffice,
-        password: password.trim()
+        password: password.trim(),
+        userType: userType
       })
 
       // La redirección se maneja en el useEffect cuando cambia isAuthenticated
@@ -62,14 +64,7 @@ export default function Home() {
     }
   }
 
-  // Mostrar loading mientras se verifica la autenticación
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
-      </div>
-    )
-  }
+
 
   // Obtener información de la oficina seleccionada
   const officeInfo = selectedOffice ? OFFICES.find(o => o.code === selectedOffice) : null
@@ -144,6 +139,43 @@ export default function Home() {
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-6">
                 
+                {/* Selector de tipo de usuario */}
+                <div className="space-y-2">
+                  <Label htmlFor="userType" className="flex items-center gap-2">
+                    <LogIn className="h-4 w-4" />
+                    Tipo de Usuario
+                  </Label>
+                  <Select value={userType} onValueChange={(value: 'spoc' | 'rh') => setUserType(value)} disabled={isSubmitting}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecciona tu tipo de usuario" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="spoc">
+                        <div className="flex items-center gap-3 py-1">
+                          <div className="w-8 h-8 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center">
+                            <Lock className="h-4 w-4 text-green-600" />
+                          </div>
+                          <div className="text-left">
+                            <div className="font-medium">SPOC</div>
+                            <div className="text-xs text-muted-foreground">Acceso completo - Crear, editar, eliminar</div>
+                          </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="rh">
+                        <div className="flex items-center gap-3 py-1">
+                          <div className="w-8 h-8 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center">
+                            <Eye className="h-4 w-4 text-blue-600" />
+                          </div>
+                          <div className="text-left">
+                            <div className="font-medium">Recursos Humanos</div>
+                            <div className="text-xs text-muted-foreground">Solo lectura - Ver, consultar, descargar</div>
+                          </div>
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 {/* Selector de oficina */}
                 <div className="space-y-2">
                   <Label htmlFor="office" className="flex items-center gap-2">
