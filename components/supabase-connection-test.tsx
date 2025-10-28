@@ -7,10 +7,18 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { CheckCircle2, AlertCircle, Loader2 } from "lucide-react"
 
-// Creamos un cliente de Supabase para el lado del cliente
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Función para crear cliente de Supabase de forma segura
+const createSupabaseClient = () => {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.warn('Supabase environment variables not found during build time')
+    return null
+  }
+  
+  return createClient(supabaseUrl, supabaseAnonKey)
+}
 
 export default function SupabaseConnectionTest() {
   const [isLoading, setIsLoading] = useState(false)
@@ -25,6 +33,13 @@ export default function SupabaseConnectionTest() {
     setVersionInfo(null)
 
     try {
+      // Crear cliente de Supabase de forma segura
+      const supabase = createSupabaseClient()
+      
+      if (!supabase) {
+        throw new Error("No se pudo crear el cliente de Supabase. Verifica las variables de entorno.")
+      }
+
       // Realizamos una consulta simple para verificar la conexión
       const { data, error } = await supabase.rpc("pg_version")
 
@@ -44,11 +59,14 @@ export default function SupabaseConnectionTest() {
   }
 
   useEffect(() => {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    
     if (supabaseUrl && supabaseAnonKey) {
       testConnection()
     } else {
       setIsConnected(false)
-      setErrorMessage("Faltan las variables de entorno de Supabase")
+      setErrorMessage("Faltan las variables de entorno de Supabase (NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY)")
     }
   }, [])
 

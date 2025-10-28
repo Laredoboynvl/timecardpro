@@ -2,6 +2,9 @@ import SupabaseConnectionTest from "@/components/supabase-connection-test"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 
+// Evitar prerenderizado estático para esta página
+export const dynamic = 'force-dynamic'
+
 export default function SupabaseTestPage() {
   return (
     <div className="container mx-auto py-10 px-4">
