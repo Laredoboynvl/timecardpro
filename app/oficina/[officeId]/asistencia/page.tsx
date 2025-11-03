@@ -1330,22 +1330,6 @@ export default function AsistenciaPage() {
                     className="pl-9 w-64"
                   />
                 </div>
-                
-                {/* Indicador de tipo seleccionado */}
-                {selectedAttendanceType && (
-                  <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 border border-blue-200 rounded-md">
-                    <span className="text-sm text-blue-700">Marcando como:</span>
-                    <div className="flex items-center gap-1">
-                      <div
-                        className="w-4 h-4 rounded-full border flex items-center justify-center text-xs font-bold text-white"
-                        style={{ backgroundColor: selectedAttendanceType.color }}
-                      >
-                        {selectedAttendanceType.code}
-                      </div>
-                      <span className="text-sm font-medium text-blue-800">{selectedAttendanceType.name}</span>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           </CardContent>

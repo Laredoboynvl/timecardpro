@@ -17,6 +17,15 @@ interface Employee {
   position: string
 }
 
+interface VacationRequest {
+  id?: string
+  employee_id: string
+  start_date: string
+  end_date: string
+  days_requested: number
+  status: string
+}
+
 interface AttendanceCalendarProps {
   month: number
   year: number
@@ -29,6 +38,7 @@ interface AttendanceCalendarProps {
   selectedDayType?: string // Nueva prop para el tipo de día seleccionado
   onAttendanceUpdate?: (newAttendance: AttendanceData) => void // Prop para actualizar la asistencia
   visibleRows?: string // Nueva propiedad para controlar las filas visibles
+  approvedVacations?: VacationRequest[] // Nueva prop para vacaciones aprobadas
 }
 
 // Definir los tipos de día
@@ -70,6 +80,7 @@ export function AttendanceCalendar(props: AttendanceCalendarProps) {
     onAttendanceUpdate,
     officeId,
     visibleRows,
+    approvedVacations = [],
   } = props
   const [attendance, setAttendance] = useState<AttendanceData>({})
   const [isDragging, setIsDragging] = useState(false)
@@ -123,6 +134,27 @@ export function AttendanceCalendar(props: AttendanceCalendarProps) {
     return date.getDay() === 0 // 0 es domingo
   }
 
+  // Verificar si un día específico de un empleado está en vacaciones aprobadas
+  const isVacationDay = (employeeId: string, day: number): boolean => {
+    if (!approvedVacations || approvedVacations.length === 0) return false
+    
+    const currentDate = new Date(year, month, day)
+    
+    return approvedVacations.some(vacation => {
+      if (vacation.employee_id !== employeeId) return false
+      
+      // Parsear fechas de inicio y fin
+      const [startYear, startMonth, startDay] = vacation.start_date.split('-').map(Number)
+      const [endYear, endMonth, endDay] = vacation.end_date.split('-').map(Number)
+      
+      const startDate = new Date(startYear, startMonth - 1, startDay)
+      const endDate = new Date(endYear, endMonth - 1, endDay)
+      
+      // Verificar si el día actual está dentro del rango de vacaciones
+      return currentDate >= startDate && currentDate <= endDate
+    })
+  }
+
   // Cargar datos de asistencia desde localStorage
   useEffect(() => {
     const loadAttendance = async () => {
@@ -166,6 +198,42 @@ export function AttendanceCalendar(props: AttendanceCalendarProps) {
       loadAttendance()
     }
   }, [month, year, employees])
+
+  // Marcar automáticamente los días de vacaciones aprobadas
+  useEffect(() => {
+    if (!approvedVacations || approvedVacations.length === 0 || employees.length === 0) return
+
+    setAttendance(prevAttendance => {
+      const updatedAttendance = { ...prevAttendance }
+      
+      // Para cada empleado
+      employees.forEach(employee => {
+        if (!updatedAttendance[employee.id]) {
+          updatedAttendance[employee.id] = {}
+        }
+        
+        // Verificar cada día del mes
+        const daysInMonth = new Date(year, month + 1, 0).getDate()
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dateKey = `${year}-${month + 1}-${day}`
+          
+          // Si el día está en vacaciones y no está marcado, marcarlo como "vacation"
+          if (isVacationDay(employee.id, day)) {
+            // Solo marcar si no está ya marcado o si está marcado como algo diferente
+            if (!updatedAttendance[employee.id][dateKey] || 
+                (typeof updatedAttendance[employee.id][dateKey] === 'object' && 
+                 updatedAttendance[employee.id][dateKey].dayTypeId !== 'vacation')) {
+              updatedAttendance[employee.id][dateKey] = {
+                dayTypeId: 'vacation',
+              }
+            }
+          }
+        }
+      })
+      
+      return updatedAttendance
+    })
+  }, [approvedVacations, employees, month, year])
 
   // Guardar datos de asistencia en localStorage cuando cambien
   useEffect(() => {
@@ -616,19 +684,19 @@ export function AttendanceCalendar(props: AttendanceCalendarProps) {
                         isLocked ? "bg-gray-50 dark:bg-gray-900" : "",
                       )}
                       onMouseDown={(e) => {
-                        if (enableDragSelection && !nonWorkingDay && !isSunday(day) && !isLocked) {
+                        if (enableDragSelection && !nonWorkingDay && !isSunday(day) && !isLocked && !isVacationDay(employee.id, day)) {
                           e.preventDefault()
                           handleDragStart(employee.id, day)
                         }
                       }}
                       onMouseEnter={() => {
-                        if (isDragging && enableDragSelection && !nonWorkingDay && !isSunday(day) && !isLocked) {
+                        if (isDragging && enableDragSelection && !nonWorkingDay && !isSunday(day) && !isLocked && !isVacationDay(employee.id, day)) {
                           handleDragOver(employee.id, day)
                         }
                       }}
                       style={{
                         cursor:
-                          isLocked || isSunday(day)
+                          isLocked || isSunday(day) || isVacationDay(employee.id, day)
                             ? "not-allowed"
                             : enableDragSelection && !nonWorkingDay
                               ? "pointer"
@@ -643,15 +711,17 @@ export function AttendanceCalendar(props: AttendanceCalendarProps) {
                           nonWorkingDay ? "opacity-50 cursor-not-allowed" : "",
                           isSunday(day) ? "opacity-50 cursor-not-allowed" : "",
                           isLocked ? "opacity-80" : "",
+                          isVacationDay(employee.id, day) ? "opacity-90 cursor-not-allowed" : "",
                         )}
                         onClick={() =>
                           !nonWorkingDay &&
                           !isSunday(day) &&
                           !isLocked &&
+                          !isVacationDay(employee.id, day) &&
                           handleAttendanceChange(employee.id, day, props.selectedDayType || "regular")
                         }
                         onMouseEnter={() => {
-                          if (isDragging && enableDragSelection && !nonWorkingDay && !isSunday(day) && !isLocked) {
+                          if (isDragging && enableDragSelection && !nonWorkingDay && !isSunday(day) && !isLocked && !isVacationDay(employee.id, day)) {
                             handleDragOver(employee.id, day)
                           }
                         }}

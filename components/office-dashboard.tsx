@@ -55,6 +55,8 @@ import {
   getEmployeesByOfficeClient as getEmployeesByOffice,
   addMultipleEmployees,
   addEmployee,
+  getVacationRequests,
+  type VacationRequest,
 } from "@/lib/supabase/db-functions"
 import { createClientSupabaseClient } from "@/lib/supabase/client"
 
@@ -214,6 +216,7 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
   const [attendance, setAttendance] = useState<AttendanceData>({})
   const [visibleRows, setVisibleRows] = useState<string>("auto") // Estado para el número de filas visibles
   const [selectedDayType, setSelectedDayType] = useState<string>("regular")
+  const [approvedVacations, setApprovedVacations] = useState<VacationRequest[]>([]) // Estado para vacaciones aprobadas del mes
   const { toast } = useToast()
   const [exportModalOpen, setExportModalOpen] = useState(false)
   const [hasComments, setHasComments] = useState(false)
@@ -275,6 +278,28 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
           ...prev,
           [monthKey]: isLocked,
         }))
+
+        // 5. Cargar vacaciones aprobadas del mes actual
+        try {
+          const vacationsData = await getVacationRequests(officeId)
+          // Filtrar solo las vacaciones aprobadas o en progreso para el mes actual
+          const approvedVacationsForMonth = vacationsData.filter(vacation => {
+            const status = vacation.status === 'approved' || vacation.status === 'in_progress'
+            if (!status) return false
+            
+            // Parsear fechas
+            const startDate = new Date(vacation.start_date)
+            const endDate = new Date(vacation.end_date)
+            const monthStart = new Date(currentYear, currentMonth, 1)
+            const monthEnd = new Date(currentYear, currentMonth + 1, 0)
+            
+            // Verificar si las vacaciones caen en el mes actual
+            return (startDate <= monthEnd && endDate >= monthStart)
+          })
+          setApprovedVacations(approvedVacationsForMonth)
+        } catch (error) {
+          console.error("Error al cargar vacaciones:", error)
+        }
       } catch (error) {
         console.error("Error al cargar datos desde Supabase:", error)
         toast({
@@ -2999,6 +3024,7 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
               selectedDayType={selectedDayType}
               onAttendanceUpdate={handleAttendanceUpdate}
               visibleRows={visibleRows}
+              approvedVacations={approvedVacations}
             />
           </CardContent>
         </Card>
