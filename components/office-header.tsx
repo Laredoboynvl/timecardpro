@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Building, ChevronLeft } from "lucide-react"
 import { useState, useEffect } from "react"
 import type { Office } from "@/lib/supabase/db-functions"
+import { useAuth } from "@/lib/hooks/useAuth"
 
 interface OfficeHeaderProps {
   office: Office
@@ -12,9 +13,12 @@ interface OfficeHeaderProps {
 
 export function OfficeHeader({ office }: OfficeHeaderProps) {
   const [currentDateTime, setCurrentDateTime] = useState<Date | null>(null)
+  const [isMounted, setIsMounted] = useState(false)
+  const { isSPOC, isRH, isEmployee } = useAuth()
 
   useEffect(() => {
-    // Set the initial date/time after hydration
+    // Set mounted state and initial date/time after hydration
+    setIsMounted(true)
     setCurrentDateTime(new Date())
     
     // Update time every minute
@@ -24,6 +28,23 @@ export function OfficeHeader({ office }: OfficeHeaderProps) {
 
     return () => clearInterval(interval)
   }, [])
+
+  // Determinar el tipo de usuario y su estilo
+  const getUserTypeInfo = () => {
+    if (!isMounted) return null // Evitar hydration mismatch
+    
+    if (isSPOC) {
+      return { label: 'SPOC', bgColor: 'bg-green-100', textColor: 'text-green-800' }
+    } else if (isRH) {
+      return { label: 'Recursos Humanos', bgColor: 'bg-blue-100', textColor: 'text-blue-800' }
+    } else if (isEmployee) {
+      return { label: 'Empleado', bgColor: 'bg-purple-100', textColor: 'text-purple-800' }
+    }
+    return null
+  }
+
+  const userTypeInfo = getUserTypeInfo()
+
   return (
     <header className="border-b bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 shadow-sm">
       <div className="container mx-auto py-6 px-6 flex items-center justify-between">
@@ -50,13 +71,15 @@ export function OfficeHeader({ office }: OfficeHeaderProps) {
           </div>
         </div>
 
-        {/* Indicador de estado del sistema */}
+        {/* Indicador de fecha y tipo de usuario */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-full">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-xs font-medium text-green-700 dark:text-green-300">Sistema Activo</span>
-          </div>
           <div className="text-right">
+            {/* Tipo de usuario discreto arriba de la fecha */}
+            {userTypeInfo && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mb-1">
+                {userTypeInfo.label}
+              </p>
+            )}
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {currentDateTime ? currentDateTime.toLocaleDateString("es-MX", {
                 weekday: "long",

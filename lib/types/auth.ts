@@ -22,7 +22,7 @@ export interface OfficeUser {
 export interface LoginCredentials {
   office_code: string
   password: string
-  userType: 'spoc' | 'rh'
+  userType: 'spoc' | 'rh' | 'employee'
 }
 
 export interface AuthSession {

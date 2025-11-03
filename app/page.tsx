@@ -8,28 +8,36 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Building, Lock, LogIn, Eye, EyeOff, MapPin } from "lucide-react"
+import { Calendar, Lock, LogIn, Eye, EyeOff, MapPin, User, Building } from "lucide-react"
 import { OFFICES } from "@/lib/types/auth"
-import { useAuth } from "@/lib/hooks/useAuth"
+import { useAuth } from "@/hooks/use-auth"
 
 export default function Home() {
   const router = useRouter()
-  const { login, isAuthenticated } = useAuth()
+  const { login, isAuthenticated, session, isLoading, user, office } = useAuth()
 
   const [selectedOffice, setSelectedOffice] = useState('')
-  const [userType, setUserType] = useState<'spoc' | 'rh'>('spoc')
+  const [userType, setUserType] = useState<'spoc' | 'rh' | 'employee'>('spoc')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [hasRedirected, setHasRedirected] = useState(false)
 
-  // Redirigir si ya está autenticado
+  // Redirigir si ya está autenticado - solo una vez
   useEffect(() => {
-    if (isAuthenticated) {
-      const officeCode = selectedOffice || 'TIJ' // Default a Tijuana
-      router.push(`/dashboard/${officeCode.toLowerCase()}`)
+    if (!isLoading && isAuthenticated && session && !hasRedirected) {
+      setHasRedirected(true)
+      const officeCode = session.office?.code?.toLowerCase() || 'tij'
+      
+      // Redirigir según el tipo de usuario
+      if (session.user.role === 'employee') {
+        router.replace(`/empleado/${officeCode}`)
+      } else {
+        router.replace(`/dashboard/${officeCode}`)
+      }
     }
-  }, [isAuthenticated, router, selectedOffice])
+  }, [isAuthenticated, router, session, isLoading, hasRedirected])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -68,6 +76,20 @@ export default function Home() {
 
   // Obtener información de la oficina seleccionada
   const officeInfo = selectedOffice ? OFFICES.find(o => o.code === selectedOffice) : null
+
+  // Mostrar pantalla de carga mientras se inicializa
+  if (isLoading || (isAuthenticated && session)) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 text-lg">
+            {isAuthenticated ? 'Redirigiendo...' : 'Inicializando sistema...'}
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
@@ -145,7 +167,7 @@ export default function Home() {
                     <LogIn className="h-4 w-4" />
                     Tipo de Usuario
                   </Label>
-                  <Select value={userType} onValueChange={(value: 'spoc' | 'rh') => setUserType(value)} disabled={isSubmitting}>
+                  <Select value={userType} onValueChange={(value: 'spoc' | 'rh' | 'employee') => setUserType(value)} disabled={isSubmitting}>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Selecciona tu tipo de usuario" />
                     </SelectTrigger>
@@ -167,6 +189,16 @@ export default function Home() {
                           </div>
                           <div className="text-left">
                             <div className="font-medium">Recursos Humanos</div>
+                          </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="employee">
+                        <div className="flex items-center gap-3 py-1">
+                          <div className="w-8 h-8 bg-purple-100 dark:bg-purple-900 rounded-full flex items-center justify-center">
+                            <User className="h-4 w-4 text-purple-600" />
+                          </div>
+                          <div className="text-left">
+                            <div className="font-medium">Empleado</div>
                           </div>
                         </div>
                       </SelectItem>

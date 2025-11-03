@@ -19,6 +19,7 @@ import {
   Building, 
   Users, 
   Calendar, 
+  CalendarDays,
   LogOut, 
   Settings, 
   BarChart3,
@@ -210,19 +211,23 @@ export default function DashboardPage() {
     loadDashboardData()
   }, [office])
 
-  // Redirigir si no está autenticado
+  // Verificación de autenticación y redirección
   useEffect(() => {
-    if (!isAuthenticated && !isLoading) {
-      router.push('/')
-    }
-  }, [isAuthenticated, isLoading, router])
+    // Si está cargando, no hacer nada
+    if (isLoading) return
 
-  // Redirigir si la oficina no coincide
-  useEffect(() => {
-    if (isAuthenticated && office && office.code !== officeCodeFromUrl) {
-      router.push(`/dashboard/${office.code.toLowerCase()}`)
+    // Si no está autenticado, redirigir al login
+    if (!isAuthenticated) {
+      router.replace('/')
+      return
     }
-  }, [isAuthenticated, office, officeCodeFromUrl, router])
+
+    // Si está autenticado pero la oficina no coincide, redirigir a la oficina correcta
+    if (office && officeCodeFromUrl && office.code.toUpperCase() !== officeCodeFromUrl.toUpperCase()) {
+      router.replace(`/dashboard/${office.code.toLowerCase()}`)
+      return
+    }
+  }, [isAuthenticated, isLoading, office, officeCodeFromUrl, router])
 
   const handleLogout = () => {
     logout()
@@ -343,6 +348,15 @@ export default function DashboardPage() {
       isLink: true
     },
     {
+      title: 'Calendario Consolidado',
+      description: 'Vista unificada de vacaciones y días festivos',
+      icon: CalendarDays,
+      href: `/oficina/${office.code}/calendario-vacaciones`,
+      color: 'bg-cyan-500',
+      available: true,
+      isLink: true
+    },
+    {
       title: 'Reportes',
       description: 'Generar reportes de asistencia y estadísticas',
       icon: BarChart3,
@@ -357,7 +371,7 @@ export default function DashboardPage() {
       icon: Clock,
       href: `/oficina/${office.code}/horarios`,
       color: 'bg-orange-500',
-      available: user.role === 'admin',
+      available: true, // Siempre disponible para SPOC y RH
       isLink: true
     },
     {
@@ -365,7 +379,7 @@ export default function DashboardPage() {
       description: 'Ajustes de la oficina y gestión de datos',
       icon: Settings,
       color: 'bg-gray-500',
-      available: user.role === 'admin',
+      available: true, // Siempre disponible para SPOC y RH
       isLink: false,
       onClick: () => setShowConfigSection(true)
     }

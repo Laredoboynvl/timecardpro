@@ -2,6 +2,13 @@ import { createServerSupabaseClient } from "./server"
 import { createClientSupabaseClient } from "./client"
 import { mapOfficeIdToUUID } from "../utils/office-mapping"
 
+// Función helper para parsear fechas sin problemas de UTC
+const parseLocalDate = (dateString: string | Date): Date => {
+  if (dateString instanceof Date) return dateString
+  const [year, month, day] = dateString.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
 // Tipos
 export interface Office {
   id: string
@@ -340,7 +347,23 @@ export async function getEmployeesByOfficeClient(officeId: string): Promise<Empl
     return []
   }
 
-  return data || []
+  // Mapear los datos de la base de datos al formato esperado por el componente
+  const mappedEmployees: Employee[] = (data || []).map((emp: any) => ({
+    id: emp.id as string,
+    office_id: emp.office_id as string,
+    name: emp.name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || 'Sin nombre',
+    position: (emp.position || 'analista') as string,
+    employee_number: emp.employee_code || emp.employee_number, // Mapear employee_code a employee_number
+    hire_date: emp.hire_date,
+    employee_comments: emp.employee_comments,
+    office_tag: emp.office_tag,
+    active: emp.active ?? emp.is_active ?? true,
+    created_at: emp.created_at,
+    updated_at: emp.updated_at
+  }))
+
+  console.log(`✅ Mapped ${mappedEmployees.length} employees with employee numbers`)
+  return mappedEmployees
 }
 
 export async function addEmployee(employee: Omit<Employee, "id" | "created_at" | "updated_at">): Promise<Employee> {
@@ -1096,7 +1119,8 @@ export async function createVacationCyclesForEmployee(employeeId: string): Promi
 
   console.log(`📅 Empleado contratado el: ${employee.hire_date}`)
 
-  const hireDate = new Date(employee.hire_date)
+  // Parsear fecha localmente sin problemas UTC
+  const hireDate = parseLocalDate(employee.hire_date)
   const currentDate = new Date()
   const cycles: VacationCycle[] = []
 
@@ -2142,6 +2166,77 @@ export async function createBulkHolidays(officeId: string, holidays: Omit<Holida
   }
 }
 
+// Crear días festivos para TODAS las oficinas (carga masiva global)
+export async function createBulkHolidaysForAllOffices(holidays: Omit<Holiday, "id" | "created_at" | "updated_at" | "office_id">[]): Promise<{ 
+  success: boolean, 
+  created: number, 
+  errors: string[], 
+  duplicates: string[],
+  officesAffected: number
+}> {
+  try {
+    const supabase = createServerSupabaseClient()
+    
+    // Obtener todas las oficinas
+    const { data: offices, error: officesError } = await supabase
+      .from("offices")
+      .select("id, code, name")
+
+    if (officesError || !offices || offices.length === 0) {
+      return {
+        success: false,
+        created: 0,
+        errors: ["No se pudieron obtener las oficinas"],
+        duplicates: [],
+        officesAffected: 0
+      }
+    }
+
+    console.log(`🌍 Cargando ${holidays.length} días festivos para ${offices.length} oficinas`)
+
+    const totalResults = {
+      success: true,
+      created: 0,
+      errors: [] as string[],
+      duplicates: [] as string[],
+      officesAffected: 0
+    }
+
+    // Crear festivos para cada oficina
+    for (const office of offices) {
+      console.log(`📍 Procesando oficina: ${office.name} (${office.code})`)
+      
+      const result = await createBulkHolidays(office.id, holidays)
+      
+      if (result.created > 0) {
+        totalResults.officesAffected++
+      }
+      
+      totalResults.created += result.created
+      totalResults.errors.push(...result.errors.map(e => `${office.name}: ${e}`))
+      totalResults.duplicates.push(...result.duplicates.map(d => `${office.name}: ${d}`))
+      
+      if (!result.success) {
+        totalResults.success = false
+      }
+    }
+
+    console.log(`✅ Carga global completada: ${totalResults.created} días creados en ${totalResults.officesAffected} oficinas`)
+    
+    return totalResults
+
+  } catch (error) {
+    console.error("💥 Error en createBulkHolidaysForAllOffices:", error)
+    return {
+      success: false,
+      created: 0,
+      errors: [error instanceof Error ? error.message : "Error desconocido"],
+      duplicates: [],
+      officesAffected: 0
+    }
+  }
+}
+
 // Eliminar días festivos masivamente por rango de fechas
 export async function deleteBulkHolidays(officeId: string, startDate?: string, endDate?: string): Promise<{ 
   success: boolean, 
@@ -2247,8 +2342,8 @@ export async function cancelVacationRequest(requestId: string): Promise<boolean>
       console.log(`🔄 ${request.days_requested} días restaurados a los ciclos activos`)
       return true
     } else {
-      console.error("Error al restaurar días, pero status fue actualizado")
-      return true // La solicitud fue cancelada aunque los días no se restauraron
+      console.warn("⚠️ No se pudieron restaurar todos los días (ciclos expirados o sin espacio), pero la solicitud fue cancelada exitosamente")
+      return true // La solicitud fue cancelada aunque los días no se restauraron completamente
     }
 
   } catch (error) {

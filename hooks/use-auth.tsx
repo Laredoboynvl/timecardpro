@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, createContext, useContext, ReactNode } from 'react'
+import { useState, useEffect, useCallback, createContext, useContext, ReactNode } from 'react'
 import { authService } from '@/lib/auth/auth-service'
 import { AuthSession, OfficeUser, Office } from '@/lib/types/auth'
 
@@ -10,7 +10,7 @@ interface AuthContextType {
   office: Office | null
   isAuthenticated: boolean
   isLoading: boolean
-  login: (credentials: { office_code: string; password: string }) => Promise<void>
+  login: (credentials: { office_code: string; password: string; userType?: 'spoc' | 'rh' | 'employee' }) => Promise<void>
   logout: () => void
   renewSession: () => void
 }
@@ -35,22 +35,36 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const renewalInterval = setInterval(() => {
       if (authService.isAuthenticated()) {
         authService.renewSession()
-        setSession(authService.getCurrentSession())
+        const renewedSession = authService.getCurrentSession()
+        // Solo actualizar si la sesión cambió para evitar re-renders innecesarios
+        setSession(prevSession => {
+          if (JSON.stringify(prevSession) !== JSON.stringify(renewedSession)) {
+            return renewedSession
+          }
+          return prevSession
+        })
       }
     }, 30 * 60 * 1000) // 30 minutos
 
     return () => clearInterval(renewalInterval)
   }, [])
 
-  const login = async (credentials: { office_code: string; password: string }) => {
-    setIsLoading(true)
+  const login = useCallback(async (credentials: { office_code: string; password: string; userType?: 'spoc' | 'rh' | 'employee' }) => {
     try {
-      const newSession = await authService.login(credentials)
+      setIsLoading(true)
+      const newSession = await authService.login({
+        office_code: credentials.office_code,
+        password: credentials.password,
+        userType: credentials.userType || 'spoc' // default to spoc if not provided
+      })
       setSession(newSession)
+    } catch (error) {
+      setSession(null)
+      throw error
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [])
 
   const logout = () => {
     authService.logout()

@@ -1,7 +1,7 @@
 "use client"
-
+// Gestión de Vacaciones - Actualizado con colores de ciclos y botones siempre visibles
 import { useState, useEffect } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { OfficeHeader } from "@/components/office-header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,8 +13,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Calendar, Plus, Filter, Download, Search, Info, Users, ChevronLeft, ChevronRight, Settings, Minus, History, Clock, TrendingUp, Trash2, AlertTriangle } from "lucide-react"
+import { Calendar, Plus, Filter, Download, Search, Info, Users, ChevronLeft, ChevronRight, Settings, Minus, History, Clock, TrendingUp, Trash2, AlertTriangle, CalendarDays } from "lucide-react"
 import { OFFICES } from "@/lib/types/auth"
+import { useAuth } from "@/lib/hooks/useAuth"
+import { authService } from "@/lib/auth/auth-service"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -94,9 +96,11 @@ const VACATION_DAYS_BY_LAW = [
 
 export default function VacacionesPage() {
   const params = useParams()
+  const router = useRouter()
   const officeId = typeof params.officeId === 'string' ? params.officeId : params.officeId?.[0] || ''
   const office = OFFICES.find((o) => o.code.toLowerCase() === officeId.toLowerCase())
   const { toast } = useToast()
+  const { isSPOC, isRH, isEmployee } = useAuth()
 
   // Función helper para convertir fecha a formato YYYY-MM-DD sin problemas de UTC
   const formatDateToLocalString = (date: Date): string => {
@@ -126,8 +130,12 @@ export default function VacacionesPage() {
   const [showHistorialModal, setShowHistorialModal] = useState(false)
   const [showCancelConfirmModal, setShowCancelConfirmModal] = useState(false)
   const [showCancelSuccessModal, setShowCancelSuccessModal] = useState(false)
+  const [showPendingAuthorizationsModal, setShowPendingAuthorizationsModal] = useState(false)
   const [pendingCancelRequest, setPendingCancelRequest] = useState<{request: any, warningMessage: string} | null>(null)
   const [pendingSuccessCancel, setPendingSuccessCancel] = useState<{request: any, distributionDetails: string} | null>(null)
+  
+  // Estado para evitar hydration mismatch
+  const [isMounted, setIsMounted] = useState(false)
   
   // Control de días
   const [controlAction, setControlAction] = useState<'add' | 'remove'>('add')
@@ -168,6 +176,23 @@ export default function VacacionesPage() {
   // Modal de detalle de solicitud
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequest, setSelectedRequest] = useState<VacationRequest | null>(null)
+
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
+
+  // Verificar tipo de usuario usando authService
+  const [isSPOCUser, setIsSPOCUser] = useState(false)
+  const [isRHUser, setIsRHUser] = useState(false) 
+  const [isEmployeeUser, setIsEmployeeUser] = useState(false)
+
+  useEffect(() => {
+    if (isMounted) {
+      setIsSPOCUser(authService.isSPOC())
+      setIsRHUser(authService.isRH())
+      setIsEmployeeUser(authService.isEmployee())
+    }
+  }, [isMounted])
 
   useEffect(() => {
     if (office) {
@@ -218,9 +243,26 @@ export default function VacacionesPage() {
         getHolidays(office.id)
       ])
       
+      // Filtrar solicitudes según el tipo de usuario
+      const filteredByUser = requestsData.filter(request => {
+        // Para empleados: solo ver sus propias solicitudes
+        if (isEmployeeUser) {
+          // TODO: Comparar con el ID del empleado actual cuando esté disponible
+          return true // Por ahora mostrar todas
+        }
+        
+        // Para SPOC: solo mostrar aprobadas O las que él mismo haya creado directamente
+        if (isSPOCUser) {
+          return request.status === 'approved' || request.approved_by === 'Sistema'
+        }
+        
+        // Para RH: mostrar todas (aprobadas y pendientes)
+        return true
+      })
+      
       setEmployees(employeesData)
-      setVacationRequests(requestsData)
-      setFilteredRequests(requestsData)
+      setVacationRequests(filteredByUser)
+      setFilteredRequests(filteredByUser)
       setHolidays(holidaysData)
     } catch (error) {
       console.error("Error loading data:", error)
@@ -235,19 +277,36 @@ export default function VacacionesPage() {
   }
 
   const filterRequests = () => {
-    if (!searchTerm.trim()) {
-      setFilteredRequests(vacationRequests)
-      return
+    // Aplicar filtro por término de búsqueda
+    let filtered = vacationRequests
+    
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase()
+      filtered = vacationRequests.filter(request => {
+        const employee = employees.find(emp => emp.id === request.employee_id)
+        const employeeName = employee?.name || `${employee?.first_name || ''} ${employee?.last_name || ''}`.trim() || ''
+        return employeeName.toLowerCase().includes(term) ||
+               request.status.toLowerCase().includes(term)
+      })
     }
-
-    const term = searchTerm.toLowerCase()
-    const filtered = vacationRequests.filter(request => {
-      const employee = employees.find(emp => emp.id === request.employee_id)
-      const employeeName = employee?.name || `${employee?.first_name || ''} ${employee?.last_name || ''}`.trim() || ''
-      return employeeName.toLowerCase().includes(term) ||
-             request.status.toLowerCase().includes(term)
+    
+    // Aplicar filtro adicional por tipo de usuario (ya aplicado en loadData, pero por seguridad)
+    const finalFiltered = filtered.filter(request => {
+      if (isEmployeeUser) {
+        // Empleados: solo sus propias solicitudes
+        return true // TODO: Implementar filtro por empleado actual
+      }
+      
+      if (isSPOCUser) {
+        // SPOC: solo aprobadas O las que él mismo haya creado directamente
+        return request.status === 'approved' || request.approved_by === 'Sistema'
+      }
+      
+      // RH: todas las solicitudes
+      return true
     })
-    setFilteredRequests(filtered)
+    
+    setFilteredRequests(finalFiltered)
   }
 
   // Funciones del calendario
@@ -980,73 +1039,56 @@ export default function VacacionesPage() {
       return
     }
 
-    // 🔧 NUEVA LÓGICA: Determinar si crear una o múltiples solicitudes
+    // 🔧 NUEVA LÓGICA: SIEMPRE crear UNA SOLA solicitud agrupada
     const sortedDates = [...selectedDates].sort((a, b) => a.getTime() - b.getTime())
     const daysRequested = selectedDates.length
 
-    // Verificar si las fechas son consecutivas
-    const areConsecutive = sortedDates.every((date, index) => {
-      if (index === 0) return true
-      const prevDate = sortedDates[index - 1]
-      const dayDifference = Math.floor((date.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24))
-      return dayDifference === 1
-    })
-
     setIsLoading(true)
     try {
-      if (areConsecutive) {
-        // Días consecutivos: Crear UNA solicitud con rango
-        const startDate = formatDateToLocalString(sortedDates[0])
-        const endDate = formatDateToLocalString(sortedDates[sortedDates.length - 1])
-        
-        const newRequest: Omit<VacationRequest, "id" | "created_at" | "updated_at"> = {
-          employee_id: selectedEmployeeId,
-          office_id: office!.id,
-          start_date: startDate,
-          end_date: endDate,
-          days_requested: daysRequested,
-          status: 'approved',
-          approved_at: new Date().toISOString(),
-          approved_by: 'Sistema',
-          reason: reason || (pastDates.length > 0 ? `${reason || ''} (Incluye ${pastDates.length} días de referencia)`.trim() : undefined)
-        }
+      // Crear UNA solicitud que agrupe TODOS los días seleccionados
+      const startDate = formatDateToLocalString(sortedDates[0])
+      const endDate = formatDateToLocalString(sortedDates[sortedDates.length - 1])
+      
+      const newRequest: Omit<VacationRequest, "id" | "created_at" | "updated_at"> = {
+        employee_id: selectedEmployeeId,
+        office_id: office!.id,
+        start_date: startDate,
+        end_date: endDate,
+        days_requested: daysRequested,
+        status: isEmployeeUser ? 'pending' : 'approved',
+        approved_at: isEmployeeUser ? undefined : new Date().toISOString(),
+        approved_by: isEmployeeUser ? undefined : 'Sistema',
+        reason: reason || (pastDates.length > 0 ? `${reason || ''} (Incluye ${pastDates.length} días de referencia)`.trim() : undefined)
+      }
 
-        await createVacationRequest(newRequest)
+      await createVacationRequest(newRequest)
+      
+      // 🔧 NUEVA LÓGICA: Solo descontar días si es SPOC (aprobación inmediata)
+      if (isSPOCUser) {
+        const daysToDeductFromCycles = await calculateDaysToDeductFromCycles(selectedEmployeeId, selectedDates)
         
+        if (daysToDeductFromCycles > 0) {
+          await deductDaysFromCycles(selectedEmployeeId, daysToDeductFromCycles)
+        }
+      }
+      
+      let message: string
+      let title: string
+      
+      if (isEmployeeUser) {
+        // Mensaje para empleados (solicitud pendiente)
+        title = "Solicitud enviada"
+        message = `Tu solicitud de ${daysRequested} día${daysRequested !== 1 ? 's' : ''} de vacaciones ha sido enviada y está pendiente de aprobación por tu supervisor.`
       } else {
-        // Días NO consecutivos: Crear MÚLTIPLES solicitudes de 1 día cada una
-        for (const date of sortedDates) {
-          const dateStr = formatDateToLocalString(date)
-          
-          const newRequest: Omit<VacationRequest, "id" | "created_at" | "updated_at"> = {
-            employee_id: selectedEmployeeId,
-            office_id: office!.id,
-            start_date: dateStr,
-            end_date: dateStr, // Mismo día para start y end
-            days_requested: 1, // 1 día por solicitud
-            status: 'approved',
-            approved_at: new Date().toISOString(),
-            approved_by: 'Sistema',
-            reason: reason || (pastDates.length > 0 ? `${reason || ''} (Incluye días de referencia)`.trim() : undefined)
-          }
-
-          await createVacationRequest(newRequest)
-        }
+        // Mensaje para SPOC (aprobación inmediata)
+        title = "Vacaciones registradas"
+        message = pastDates.length > 0 
+          ? `${daysRequested} día${daysRequested !== 1 ? 's' : ''} registrado${daysRequested !== 1 ? 's' : ''}. ${futureDates.length} día${futureDates.length !== 1 ? 's' : ''} descontado${futureDates.length !== 1 ? 's' : ''} de ciclos, ${pastDates.length} día${pastDates.length !== 1 ? 's' : ''} como referencia.`
+          : `${daysRequested} día${daysRequested !== 1 ? 's' : ''} de vacaciones aprobado${daysRequested !== 1 ? 's' : ''} y descontado${daysRequested !== 1 ? 's' : ''} de tus ciclos`
       }
-      
-      // 🔧 NUEVA LÓGICA: Solo descontar días que estén DENTRO del rango de ciclos
-      const daysToDeductFromCycles = await calculateDaysToDeductFromCycles(selectedEmployeeId, selectedDates)
-      
-      if (daysToDeductFromCycles > 0) {
-        await deductDaysFromCycles(selectedEmployeeId, daysToDeductFromCycles)
-      }
-      
-      const message = pastDates.length > 0 
-        ? `${daysRequested} día${daysRequested !== 1 ? 's' : ''} registrado${daysRequested !== 1 ? 's' : ''}. ${futureDates.length} día${futureDates.length !== 1 ? 's' : ''} descontado${futureDates.length !== 1 ? 's' : ''} de ciclos, ${pastDates.length} día${pastDates.length !== 1 ? 's' : ''} como referencia.`
-        : `${daysRequested} día${daysRequested !== 1 ? 's' : ''} de vacaciones aprobado${daysRequested !== 1 ? 's' : ''} y descontado${daysRequested !== 1 ? 's' : ''} de tus ciclos`
       
       toast({
-        title: "Vacaciones registradas",
+        title: title,
         description: message
       })
 
@@ -1191,7 +1233,8 @@ export default function VacacionesPage() {
     if (!employee) return "Empleado desconocido"
     
     // Priorizar el campo name (para compatibilidad) o construir desde first_name + last_name
-    return employee.name || `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || "Empleado desconocido"
+    const fullName = employee.name || `${employee.first_name || ''} ${employee.last_name || ''}`.trim() || "Empleado desconocido"
+    return fullName
   }
 
   const getEmployeeYearsOfService = (employeeId: string) => {
@@ -1251,36 +1294,62 @@ export default function VacacionesPage() {
               <Info className="mr-2 h-4 w-4" />
               Días por Ley
             </Button>
-            <Button 
-              variant="outline"
-              onClick={() => setShowHolidayManager(true)}
-            >
-              <Calendar className="mr-2 h-4 w-4 text-red-500" />
-              Días Festivos
-            </Button>
-            <Button 
-              variant="outline"
-              onClick={() => setShowHistorialModal(true)}
-            >
-              <History className="mr-2 h-4 w-4" />
-              Detalle de Empleados
-            </Button>
-            <Button variant="outline">
-              <Filter className="mr-2 h-4 w-4" />
-              Filtros
-            </Button>
-            <Button variant="outline">
-              <Download className="mr-2 h-4 w-4" />
-              Exportar
-            </Button>
-            <Button
-              onClick={() => setShowNewRequest(true)}
-              disabled={isLoading}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Registrar Vacaciones
-            </Button>
+            {/* Todos pueden ver Días Festivos */}
+            {isMounted && (
+              <Button 
+                variant="outline"
+                onClick={() => setShowHolidayManager(true)}
+              >
+                <Calendar className="mr-2 h-4 w-4 text-red-500" />
+                Días Festivos
+              </Button>
+            )}
+            {/* Solo SPOC puede ver Autorizaciones Pendientes */}
+            {isMounted && isSPOCUser && (
+              <Button 
+                variant="outline"
+                onClick={() => router.push(`/oficina/${officeId}/autorizaciones`)}
+                className="bg-orange-50 hover:bg-orange-100 text-orange-700 border-orange-300"
+              >
+                <Clock className="mr-2 h-4 w-4" />
+                Autorizaciones Pendientes
+              </Button>
+            )}
+            {/* Solo SPOC y RH pueden ver Detalle de Empleados */}
+            {isMounted && !isEmployee && (
+              <Button 
+                variant="outline"
+                onClick={() => setShowHistorialModal(true)}
+              >
+                <History className="mr-2 h-4 w-4" />
+                Detalle de Empleados
+              </Button>
+            )}
+            {/* Solo SPOC y RH pueden usar Filtros */}
+            {isMounted && !isEmployee && (
+              <Button variant="outline">
+                <Filter className="mr-2 h-4 w-4" />
+                Filtros
+              </Button>
+            )}
+            {/* Solo SPOC y RH pueden Exportar */}
+            {isMounted && !isEmployee && (
+              <Button variant="outline">
+                <Download className="mr-2 h-4 w-4" />
+                Exportar
+              </Button>
+            )}
+            {/* Todos pueden acceder a Registrar Vacaciones */}
+            {isMounted && (
+              <Button
+                onClick={() => setShowNewRequest(true)}
+                disabled={isLoading}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                {isEmployee ? 'Solicitar Vacaciones' : 'Registrar Vacaciones'}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1348,9 +1417,9 @@ export default function VacacionesPage() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>Solicitudes de Vacaciones</CardTitle>
+                <CardTitle>Todas las Solicitudes de Vacaciones</CardTitle>
                 <CardDescription>
-                  Gestiona y revisa todas las solicitudes de vacaciones
+                  Historial completo de solicitudes ({filteredRequests.length} total)
                 </CardDescription>
               </div>
               
@@ -1541,47 +1610,68 @@ export default function VacacionesPage() {
                                   .filter(cycle => !cycle.is_expired)
                                   .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
                                   .map((cycle, index) => {
-                                    const daysUntilExpiry = Math.ceil((new Date(cycle.cycle_end_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
-                                    const isExpiringSoon = daysUntilExpiry <= 60
-                                    const hasAvailableDays = cycle.days_available > 0
-                                    const isExpired = new Date(cycle.cycle_end_date) < new Date()
+                                    const today = new Date()
+                                    const startDate = new Date(cycle.cycle_start_date)
+                                    const endDate = new Date(cycle.cycle_end_date)
                                     
-                                    // Determinar el estilo según el estado del ciclo
-                                    let cycleStyle = 'border-gray-200 bg-gray-50'
+                                    const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                                    const isExpiringSoon = daysUntilExpiry <= 60 && daysUntilExpiry > 0
+                                    const hasAvailableDays = cycle.days_available > 0
+                                    const isExpired = endDate < today
+                                    const isNotStarted = startDate > today
+                                    
+                                    // Determinar el estilo según el estado del ciclo - PRIORIDAD
+                                    let cycleStyle = ''
                                     if (isExpired) {
-                                      cycleStyle = 'border-red-300 bg-red-100' // Expirado
-                                    } else if (!hasAvailableDays) {
-                                      cycleStyle = 'border-gray-300 bg-gray-100' // Agotado pero no expirado
+                                      cycleStyle = 'border-gray-400 bg-gray-100' // Expirado → GRIS
+                                    } else if (isNotStarted) {
+                                      cycleStyle = 'border-gray-300 bg-gray-50' // No iniciado → GRIS
                                     } else if (isExpiringSoon) {
-                                      cycleStyle = 'border-red-300 bg-red-50' // Próximo a expirar
+                                      cycleStyle = 'border-red-400 bg-red-100' // Por expirar ≤60 días → ROJO
+                                    } else if (hasAvailableDays) {
+                                      cycleStyle = 'border-green-300 bg-green-50' // Activo con días → VERDE
                                     } else {
-                                      cycleStyle = 'border-blue-200 bg-blue-50' // Activo
+                                      cycleStyle = 'border-orange-300 bg-orange-50' // Agotado → NARANJA
                                     }
                                     
                                     return (
                                       <div key={cycle.id} className={`p-4 border rounded-lg text-xs ${cycleStyle} min-w-[220px] flex-shrink-0`}>
                                         {/* Header del ciclo */}
                                         <div className="flex items-center justify-between mb-2">
-                                          <span className={`font-medium ${(hasAvailableDays && !isExpired) ? 'text-blue-700' : 'text-gray-600'}`}>
+                                          <span className={`font-medium ${
+                                            isExpired ? 'text-gray-700' :
+                                            isNotStarted ? 'text-gray-600' :
+                                            isExpiringSoon ? 'text-red-700' :
+                                            hasAvailableDays ? 'text-green-700' : 'text-orange-700'
+                                          }`}>
                                             Ciclo {new Date(cycle.cycle_start_date).getFullYear()}
                                           </span>
                                           <div className="flex gap-1">
                                             {isExpired && (
-                                              <Badge variant="destructive" className="text-xs">
+                                              <Badge className="text-xs bg-gray-400 text-white">
                                                 Expirado
                                               </Badge>
                                             )}
-                                            {!isExpired && !hasAvailableDays && (
-                                              <Badge variant="outline" className="text-xs bg-gray-100 text-gray-600 border-gray-300">
-                                                Agotado
+                                            {!isExpired && isNotStarted && (
+                                              <Badge className="text-xs bg-gray-100 text-gray-600 border-gray-300">
+                                                No iniciado
                                               </Badge>
                                             )}
-                                            {!isExpired && hasAvailableDays && (
-                                              <Badge variant="outline" className="text-xs bg-green-100 text-green-700 border-green-300">
+                                            {!isExpired && !isNotStarted && isExpiringSoon && (
+                                              <Badge className="text-xs bg-red-600 text-white">
+                                                ⚠️ Expira en {daysUntilExpiry} días
+                                              </Badge>
+                                            )}
+                                            {!isExpired && !isNotStarted && !isExpiringSoon && hasAvailableDays && (
+                                              <Badge className="text-xs bg-green-600 text-white">
                                                 Activo
                                               </Badge>
                                             )}
-
+                                            {!isExpired && !isNotStarted && !isExpiringSoon && !hasAvailableDays && (
+                                              <Badge className="text-xs bg-orange-100 text-orange-700 border-orange-300">
+                                                Agotado
+                                              </Badge>
+                                            )}
                                           </div>
                                         </div>
                                         
@@ -1625,36 +1715,33 @@ export default function VacacionesPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex gap-2 justify-end">
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={() => handleViewRequest(request)}
-                              >
-                                Ver
-                              </Button>
-                              {(request.status === 'approved' || request.status === 'in_progress') && (
-                                <Button 
-                                  size="sm" 
-                                  variant="destructive"
-                                  onClick={() => request.id && handleCancelRequest(request.id)}
-                                  disabled={isLoading}
-                                >
-                                  <Trash2 className="mr-1 h-3 w-3" />
-                                  Cancelar
-                                </Button>
-                              )}
-                              {request.status === 'pending' && (
+                              {/* Solo SPOC y RH pueden ver y gestionar solicitudes */}
+                              {isMounted && !isEmployee && (
                                 <>
                                   <Button 
                                     size="sm" 
-                                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                                    variant="outline"
+                                    onClick={() => handleViewRequest(request)}
                                   >
-                                    Aprobar
+                                    Ver
                                   </Button>
-                                  <Button size="sm" variant="destructive">
-                                    Rechazar
+                                  {/* SPOC puede cancelar cualquier solicitud aprobada o en progreso */}
+                                  <Button 
+                                    size="sm" 
+                                    variant="destructive"
+                                    onClick={() => request.id && handleCancelRequest(request.id)}
+                                    disabled={isLoading || (request.status !== 'approved' && request.status !== 'in_progress')}
+                                  >
+                                    <Trash2 className="mr-1 h-3 w-3" />
+                                    Cancelar
                                   </Button>
                                 </>
+                              )}
+                              {/* Empleados solo ven un mensaje */}
+                              {isMounted && isEmployee && (
+                                <span className="text-sm text-gray-500 italic">
+                                  Solo consulta
+                                </span>
                               )}
                             </div>
                           </TableCell>
@@ -1999,26 +2086,52 @@ export default function VacacionesPage() {
                       .filter(cycle => !cycle.is_expired)
                       .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
                       .map((cycle) => {
-                        const daysUntilExpiry = Math.ceil((new Date(cycle.cycle_end_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
-                        const isExpiringSoon = daysUntilExpiry <= 60
+                        const today = new Date()
+                        const cycleEnd = new Date(cycle.cycle_end_date)
+                        const cycleStart = new Date(cycle.cycle_start_date)
+                        const daysUntilExpiry = Math.ceil((cycleEnd.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                        
+                        const isExpired = cycle.is_expired || cycleEnd < today
+                        const isExpiringSoon = !isExpired && daysUntilExpiry <= 60 && daysUntilExpiry > 0
                         const hasAvailableDays = cycle.days_available > 0
-                        const cycleStarted = new Date(cycle.cycle_start_date) <= new Date()
+                        const cycleStarted = cycleStart <= today
+                        const isNotStarted = cycleStart > today
                         
                         // Determinar estilo y estado del ciclo
-                        let bgClass = 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/50 dark:to-indigo-950/50'
-                        let badgeVariant: 'default' | 'outline' = 'default'
-                        let badgeClassName = 'text-xs bg-green-600'
-                        let badgeText = 'Activo'
+                        let bgClass = ''
+                        let badgeVariant: 'default' | 'outline' | 'destructive' | 'secondary' = 'default'
+                        let badgeClassName = ''
+                        let badgeText = ''
                         
-                        if (!cycleStarted) {
+                        if (isExpired) {
+                          // Ciclo expirado - GRIS
+                          bgClass = 'bg-gradient-to-r from-gray-100 to-gray-200 dark:from-gray-800/50 dark:to-gray-900/50'
+                          badgeVariant = 'secondary'
+                          badgeClassName = 'text-xs bg-gray-400 text-white'
+                          badgeText = 'Expirado'
+                        } else if (isNotStarted) {
+                          // Ciclo no iniciado - GRIS
                           bgClass = 'bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-900/50 dark:to-gray-800/50'
                           badgeVariant = 'outline'
                           badgeClassName = 'text-xs bg-gray-100 text-gray-600 border-gray-300'
                           badgeText = 'No iniciado'
-                        } else if (!hasAvailableDays) {
-                          bgClass = 'bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-950/50 dark:to-red-950/50'
+                        } else if (isExpiringSoon) {
+                          // Ciclo por expirar - ROJO
+                          bgClass = 'bg-gradient-to-r from-red-50 to-red-100 dark:from-red-950/50 dark:to-red-900/50'
+                          badgeVariant = 'destructive'
+                          badgeClassName = 'text-xs bg-red-600 text-white'
+                          badgeText = `⚠️ Expira en ${daysUntilExpiry} días`
+                        } else if (cycleStarted && hasAvailableDays) {
+                          // Ciclo activo con días disponibles - VERDE
+                          bgClass = 'bg-gradient-to-r from-green-50 to-green-100 dark:from-green-950/50 dark:to-green-900/50'
+                          badgeVariant = 'default'
+                          badgeClassName = 'text-xs bg-green-600 text-white'
+                          badgeText = 'Activo'
+                        } else {
+                          // Ciclo agotado pero no expirado - AMARILLO/NARANJA
+                          bgClass = 'bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-orange-950/50 dark:to-yellow-900/50'
                           badgeVariant = 'outline'
-                          badgeClassName = 'text-xs bg-red-100 text-red-700 border-red-300'
+                          badgeClassName = 'text-xs bg-orange-100 text-orange-700 border-orange-300'
                           badgeText = 'Agotado'
                         }
                         
@@ -2382,7 +2495,7 @@ export default function VacacionesPage() {
                     })()}
                     className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
                   >
-                    {isLoading ? "Procesando..." : "Aprobar y Descontar Vacaciones"}
+                    {isLoading ? "Procesando..." : (isEmployeeUser ? "Solicitar Aprobación de Vacaciones" : "Aprobar y Descontar Vacaciones")}
                   </Button>
                 </div>
               </div>
@@ -3052,6 +3165,142 @@ export default function VacacionesPage() {
           loadData()
         }}
       />
+
+      {/* Modal: Autorizaciones Pendientes */}
+      <Dialog open={showPendingAuthorizationsModal} onOpenChange={setShowPendingAuthorizationsModal}>
+        <DialogContent className="sm:max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-700">
+              <Clock className="h-5 w-5" />
+              Autorizaciones Pendientes
+            </DialogTitle>
+            <DialogDescription>
+              Solicitudes de vacaciones que requieren tu autorización como SPOC
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="py-4">
+            {vacationRequests.filter(r => r.status === 'pending').length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <Clock className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                <p className="text-lg font-medium">No hay solicitudes pendientes</p>
+                <p className="text-sm mt-2">Todas las solicitudes de vacaciones han sido revisadas</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {vacationRequests
+                  .filter(r => r.status === 'pending')
+                  .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime())
+                  .map((request) => {
+                    const employee = employees.find(emp => emp.id === request.employee_id)
+                    const employeeName = getEmployeeName(request.employee_id)
+                    const years = getEmployeeYearsOfService(request.employee_id)
+                    const daysPerYear = getEmployeeVacationDays(request.employee_id)
+                    const cycles = employeeCycles[request.employee_id] || []
+                    const totalAvailable = cycles.reduce((sum, c) => sum + c.days_available, 0)
+                    
+                    return (
+                      <Card key={request.id} className="border-l-4 border-l-orange-400">
+                        <CardContent className="p-6">
+                          <div className="flex items-start justify-between gap-4">
+                            {/* Información del empleado */}
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100">
+                                  <Users className="h-5 w-5 text-orange-600" />
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-lg">{employeeName}</p>
+                                  <p className="text-sm text-muted-foreground">
+                                    {years} año{years !== 1 ? 's' : ''} de servicio • {daysPerYear} días/año • {totalAvailable} días disponibles
+                                  </p>
+                                </div>
+                              </div>
+                              
+                              {/* Fechas solicitadas */}
+                              <div className="ml-13 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <CalendarDays className="h-4 w-4 text-gray-500" />
+                                  <span className="font-medium">
+                                    {new Date(request.start_date).toLocaleDateString('es-ES', { 
+                                      day: '2-digit', 
+                                      month: 'long', 
+                                      year: 'numeric' 
+                                    })}
+                                    {request.start_date !== request.end_date && (
+                                      <> - {new Date(request.end_date).toLocaleDateString('es-ES', { 
+                                        day: '2-digit', 
+                                        month: 'long', 
+                                        year: 'numeric' 
+                                      })}</>
+                                    )}
+                                  </span>
+                                  <Badge variant="secondary">{request.days_requested} días</Badge>
+                                </div>
+                                
+                                {request.reason && (
+                                  <div className="text-sm text-gray-600">
+                                    <span className="font-medium">Motivo:</span> {request.reason}
+                                  </div>
+                                )}
+                                
+                                {request.created_at && (
+                                  <div className="text-xs text-gray-500">
+                                    Solicitado el: {new Date(request.created_at).toLocaleDateString('es-ES', {
+                                      day: '2-digit',
+                                      month: 'long',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            
+                            {/* Botones de acción */}
+                            <div className="flex flex-col gap-2 min-w-[120px]">
+                              <Button
+                                size="sm"
+                                onClick={() => handleViewRequest(request)}
+                                variant="outline"
+                                className="w-full"
+                              >
+                                Ver Detalles
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="w-full bg-green-600 hover:bg-green-700 text-white"
+                              >
+                                Aprobar
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                className="w-full"
+                              >
+                                Rechazar
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button 
+              onClick={() => setShowPendingAuthorizationsModal(false)}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Diálogo de confirmación para cancelación con advertencias */}
       <Dialog open={showCancelConfirmModal} onOpenChange={setShowCancelConfirmModal}>

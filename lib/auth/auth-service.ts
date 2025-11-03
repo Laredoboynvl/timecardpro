@@ -7,9 +7,11 @@ const SESSION_DURATION = 8 * 60 * 60 * 1000 // 8 horas en milisegundos
 export class AuthService {
   private static instance: AuthService
   private currentSession: AuthSession | null = null
+  private hasLoaded: boolean = false
 
   private constructor() {
-    this.loadSessionFromStorage()
+    // No cargar sesión en constructor para evitar problemas SSR
+    // La sesión se carga la primera vez que se accede
   }
 
   public static getInstance(): AuthService {
@@ -24,8 +26,8 @@ export class AuthService {
    */
   public async login(credentials: LoginCredentials): Promise<AuthSession> {
     try {
-      // Contraseña única para ambos tipos de usuario
-      const validPassword = 'csramexico2025'
+      // Contraseña unificada para todos los usuarios
+      const validPassword = 'admin123'
       
       if (credentials.password !== validPassword) {
         throw new Error('Contraseña incorrecta')
@@ -41,6 +43,9 @@ export class AuthService {
       } else if (credentials.userType === 'rh') {
         userRole = 'rh'
         userName = 'Recursos Humanos'
+      } else if (credentials.userType === 'employee') {
+        userRole = 'employee'
+        userName = 'Empleado'
       } else {
         throw new Error('Tipo de usuario no válido')
       }
@@ -89,20 +94,21 @@ export class AuthService {
     this.clearSessionFromStorage()
   }
 
+    /**
+   * Inicializar sesión de forma diferida
+   */
+  private initializeSession(): void {
+    if (!this.hasLoaded) {
+      this.loadSessionFromStorage()
+      this.hasLoaded = true
+    }
+  }
+
   /**
-   * Obtener sesión actual
+   * Obtener sesión actual del usuario
    */
   public getCurrentSession(): AuthSession | null {
-    if (!this.currentSession) {
-      return null
-    }
-
-    // Verificar si la sesión ha expirado
-    if (Date.now() > this.currentSession.expires_at) {
-      this.logout()
-      return null
-    }
-
+    this.initializeSession()
     return this.currentSession
   }
 
@@ -162,10 +168,31 @@ export class AuthService {
   }
 
   /**
+   * Verificar si es Empleado
+   */
+  public isEmployee(): boolean {
+    return this.hasRole('employee')
+  }
+
+  /**
    * Verificar si puede modificar datos (crear, actualizar, eliminar)
    */
   public canModify(): boolean {
     return this.hasRole('spoc') // Solo SPOC puede modificar
+  }
+
+  /**
+   * Verificar si puede solicitar vacaciones
+   */
+  public canRequestVacations(): boolean {
+    return this.hasRole('employee')
+  }
+
+  /**
+   * Verificar si puede aprobar vacaciones
+   */
+  public canApproveVacations(): boolean {
+    return this.hasRole('spoc')
   }
 
   /**
@@ -229,6 +256,8 @@ export class AuthService {
         return 'SPOC'
       case 'rh':
         return 'Recursos Humanos'
+      case 'employee':
+        return 'Empleado'
       default:
         return 'Usuario'
     }
@@ -251,24 +280,27 @@ export class AuthService {
    * Cargar sesión desde localStorage
    */
   private loadSessionFromStorage(): void {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(AUTH_STORAGE_KEY)
-        if (stored) {
-          const session: AuthSession = JSON.parse(stored)
-          
-          // Verificar si la sesión no ha expirado
-          if (Date.now() < session.expires_at) {
-            this.currentSession = session
-          } else {
-            // Limpiar sesión expirada
-            this.clearSessionFromStorage()
-          }
+    // No cargar nada en el servidor para evitar problemas de hidratación
+    if (typeof window === 'undefined') {
+      return
+    }
+    
+    try {
+      const stored = localStorage.getItem(AUTH_STORAGE_KEY)
+      if (stored) {
+        const session: AuthSession = JSON.parse(stored)
+        
+        // Verificar si la sesión no ha expirado
+        if (Date.now() < session.expires_at) {
+          this.currentSession = session
+        } else {
+          // Limpiar sesión expirada
+          this.clearSessionFromStorage()
         }
-      } catch (error) {
-        console.error('Error al cargar sesión:', error)
-        this.clearSessionFromStorage()
       }
+    } catch (error) {
+      console.error('Error al cargar sesión:', error)
+      this.clearSessionFromStorage()
     }
   }
 

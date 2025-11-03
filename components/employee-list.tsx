@@ -18,6 +18,12 @@ import { format } from "date-fns"
 import { es } from "date-fns/locale"
 import { EmployeeForm, EmployeeFormData } from "./employee-form"
 
+// Función helper para parsear fechas sin problemas de UTC
+const parseLocalDate = (dateString: string): Date => {
+  const [year, month, day] = dateString.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
 interface Employee {
   id: string
   name: string
@@ -44,6 +50,7 @@ export function EmployeeList({
   officeName = ""
 }: EmployeeListProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [secondConfirmDialogOpen, setSecondConfirmDialogOpen] = useState(false)
   const [employeeToDelete, setEmployeeToDelete] = useState<Employee | null>(null)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [employeeToEdit, setEmployeeToEdit] = useState<Employee | null>(null)
@@ -73,14 +80,25 @@ export function EmployeeList({
   }
 
   const confirmDelete = () => {
+    // Primera confirmación: cerrar primer diálogo y abrir segundo
+    setDeleteDialogOpen(false)
+    setSecondConfirmDialogOpen(true)
+  }
+
+  const finalConfirmDelete = () => {
     if (employeeToDelete && onDeleteEmployee) {
       onDeleteEmployee(employeeToDelete.id)
       toast({
         title: "Empleado eliminado",
-        description: `${employeeToDelete.name} ha sido eliminado del sistema para futuras operaciones.`,
+        description: `${employeeToDelete.name} ha sido removido del sistema. Sus datos de vacaciones han sido eliminados, pero el historial de asistencia se mantiene.`,
       })
     }
-    setDeleteDialogOpen(false)
+    setSecondConfirmDialogOpen(false)
+    setEmployeeToDelete(null)
+  }
+
+  const cancelSecondConfirm = () => {
+    setSecondConfirmDialogOpen(false)
     setEmployeeToDelete(null)
   }
 
@@ -97,8 +115,8 @@ export function EmployeeList({
     try {
       let dateObj: Date
       if (typeof date === "string") {
-        // Agregar T00:00:00 para evitar problemas de UTC
-        dateObj = date.includes('T') ? new Date(date) : new Date(date + 'T00:00:00')
+        // Parsear fecha localmente sin UTC
+        dateObj = parseLocalDate(date)
       } else {
         dateObj = date
       }
@@ -113,8 +131,8 @@ export function EmployeeList({
     try {
       let dateObj: Date
       if (typeof hireDate === "string") {
-        // Agregar T00:00:00 para evitar problemas de UTC
-        dateObj = hireDate.includes('T') ? new Date(hireDate) : new Date(hireDate + 'T00:00:00')
+        // Parsear fecha localmente sin UTC
+        dateObj = parseLocalDate(hireDate)
       } else {
         dateObj = hireDate
       }
@@ -161,9 +179,9 @@ export function EmployeeList({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                   {employee.employee_number && (
-                    <div className="flex items-center gap-2 text-muted-foreground">
+                    <div className="flex items-center gap-2 text-blue-600 font-medium">
                       <Hash className="h-4 w-4" />
-                      <span>{employee.employee_number}</span>
+                      <span>No. {employee.employee_number}</span>
                     </div>
                   )}
                   {employee.hire_date && (
@@ -205,7 +223,7 @@ export function EmployeeList({
         <div className="text-center py-8 text-muted-foreground">No hay empleados registrados</div>
       )}
 
-      {/* Diálogo de confirmación para eliminar empleado */}
+      {/* Diálogo de confirmación para eliminar empleado - PRIMERA CONFIRMACIÓN */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
@@ -216,23 +234,66 @@ export function EmployeeList({
             <DialogDescription>¿Estás seguro de que deseas eliminar a {employeeToDelete?.name}?</DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <p className="text-sm text-muted-foreground">
-              Esta acción eliminará al empleado solo para operaciones futuras. La información ya capturada y el
-              historial de este empleado se mantendrán intactos.
+            <p className="text-sm text-muted-foreground mb-3">
+              Esta acción moverá al empleado a <strong>Ex-Empleados</strong> y realizará los siguientes cambios:
             </p>
-            <p className="text-sm text-muted-foreground mt-2">El empleado será eliminado de:</p>
-            <ul className="list-disc pl-5 mt-2 text-sm text-muted-foreground">
-              <li>Calendario de trabajo (para fechas futuras)</li>
-              <li>Menús desplegables</li>
-              <li>Listas de empleados activos</li>
-            </ul>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
+              <p className="text-sm font-semibold text-red-800 mb-2">Se eliminará permanentemente:</p>
+              <ul className="list-disc pl-5 text-sm text-red-700 space-y-1">
+                <li>Todas sus solicitudes de vacaciones (pendientes y aprobadas)</li>
+                <li>Todos sus ciclos de vacaciones</li>
+                <li>Acceso al sistema</li>
+              </ul>
+            </div>
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+              <p className="text-sm font-semibold text-green-800 mb-2">Se mantendrá:</p>
+              <ul className="list-disc pl-5 text-sm text-green-700 space-y-1">
+                <li>Historial de asistencia completo</li>
+                <li>Registro en Ex-Empleados</li>
+              </ul>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Cancelar
             </Button>
             <Button variant="destructive" onClick={confirmDelete}>
-              Eliminar
+              Continuar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* SEGUNDA CONFIRMACIÓN - Más estricta */}
+      <Dialog open={secondConfirmDialogOpen} onOpenChange={setSecondConfirmDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-6 w-6" />
+              ¡ADVERTENCIA FINAL!
+            </DialogTitle>
+            <DialogDescription className="text-base">
+              Estás a punto de eliminar permanentemente a <strong className="text-red-600">{employeeToDelete?.name}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="bg-red-100 border-2 border-red-500 rounded-lg p-4">
+              <p className="text-sm font-bold text-red-900 mb-2">⚠️ ESTA ACCIÓN NO SE PUEDE DESHACER</p>
+              <p className="text-sm text-red-800">
+                Se eliminarán TODAS las solicitudes de vacaciones y ciclos del empleado. 
+                El empleado no podrá iniciar sesión y será movido a Ex-Empleados.
+              </p>
+            </div>
+            <p className="text-sm text-center font-semibold">
+              ¿Confirmas que deseas proceder con la eliminación definitiva?
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={cancelSecondConfirm} className="flex-1">
+              No, Cancelar
+            </Button>
+            <Button variant="destructive" onClick={finalConfirmDelete} className="flex-1 bg-red-600 hover:bg-red-700">
+              Sí, Eliminar Definitivamente
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -256,10 +317,10 @@ export function EmployeeList({
               initialData={{
                 name: employeeToEdit.name,
                 position: employeeToEdit.position,
-                employee_number: employeeToEdit.employee_number,
+                employee_number: employeeToEdit.employee_number || "",
                 hire_date: employeeToEdit.hire_date 
                   ? typeof employeeToEdit.hire_date === 'string' 
-                    ? new Date(employeeToEdit.hire_date)
+                    ? parseLocalDate(employeeToEdit.hire_date)
                     : employeeToEdit.hire_date
                   : undefined,
                 comments: employeeToEdit.employee_comments,

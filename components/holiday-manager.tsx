@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import { authService } from "@/lib/auth/auth-service"
 import {
   Dialog,
   DialogContent,
@@ -56,6 +57,8 @@ export function HolidayManager({
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingHoliday, setEditingHoliday] = useState<Holiday | null>(null)
   const [activeTab, setActiveTab] = useState("calendar")
+  const [isMounted, setIsMounted] = useState(false)
+  const [isEmployee, setIsEmployee] = useState(false)
   
   // Formulario
   const [formData, setFormData] = useState({
@@ -82,6 +85,11 @@ export function HolidayManager({
     holiday.holiday_date.includes(searchTerm) ||
     (holiday.description && holiday.description.toLowerCase().includes(searchTerm.toLowerCase()))
   ).sort((a, b) => new Date(a.holiday_date).getTime() - new Date(b.holiday_date).getTime())
+
+  useEffect(() => {
+    setIsMounted(true)
+    setIsEmployee(authService.isEmployee())
+  }, [])
 
   useEffect(() => {
     if (isOpen && officeId) {
@@ -404,27 +412,41 @@ export function HolidayManager({
                     </svg>
                     Lista Completa
                   </TabsTrigger>
-                  <TabsTrigger value="bulk" className="gap-2">
-                    <Plus className="h-4 w-4" />
-                    Carga Masiva
-                  </TabsTrigger>
+                  {isMounted && !isEmployee && (
+                    <TabsTrigger value="bulk" className="gap-2">
+                      <Plus className="h-4 w-4" />
+                      Carga Masiva
+                    </TabsTrigger>
+                  )}
                 </TabsList>
               </div>
-              <Button
-                onClick={() => setShowAddForm(true)}
-                disabled={isLoading}
-                variant={activeTab === "bulk" ? "outline" : "default"}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Agregar Individual
-              </Button>
+              {isMounted && !isEmployee && (
+                <Button
+                  onClick={() => setShowAddForm(true)}
+                  disabled={isLoading}
+                  variant={activeTab === "bulk" ? "outline" : "default"}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Agregar Individual
+                </Button>
+              )}
+              {isMounted && isEmployee && (
+                <div className="text-sm text-muted-foreground px-3 py-2 bg-gray-50 rounded border">
+                  Solo consulta - Sin permisos de edición
+                </div>
+              )}
             </div>
 
             {/* Contenido del calendario y lista */}
             <TabsContent value="calendar" className="space-y-6 mt-0">
-              <div className="text-sm text-muted-foreground">
-                Haz clic en una fecha del calendario para agregar o editar un día festivo
-              </div>
+              {isMounted && (
+                <div className="text-sm text-muted-foreground">
+                  {isEmployee 
+                    ? "Vista de consulta de días festivos registrados para esta oficina"
+                    : "Haz clic en una fecha del calendario para agregar o editar un día festivo"
+                  }
+                </div>
+              )}
 
               {/* Calendario */}
               <div className="grid gap-4">
@@ -492,12 +514,15 @@ export function HolidayManager({
                         <div
                           key={day}
                           className={buttonClass}
-                          onClick={() => handleDateClick(date)}
+                          onClick={isEmployee ? undefined : () => handleDateClick(date)}
                           title={
-                            isHoliday 
-                              ? `${holiday?.name} - Clic para editar`
-                              : 'Clic para agregar día festivo'
+                            isEmployee
+                              ? (isHoliday ? `${holiday?.name} - Solo consulta` : 'Solo consulta')
+                              : (isHoliday 
+                                  ? `${holiday?.name} - Clic para editar`
+                                  : 'Clic para agregar día festivo')
                           }
+                          style={isEmployee ? { cursor: 'default' } : undefined}
                         >
                           <div className="flex flex-col items-center justify-center h-full">
                             <span className="text-xs">{day}</span>
@@ -598,32 +623,36 @@ export function HolidayManager({
                             </Badge>
                           </TableCell>
                           <TableCell className="text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setEditingHoliday(holiday)
-                                  setEditForm({
-                                    name: holiday.name,
-                                    date: holiday.holiday_date,
-                                    description: holiday.description || ''
-                                  })
-                                  setShowEditForm(true)
-                                }}
-                                className="h-8 w-8 p-0"
-                              >
-                                <Edit2 className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDeleteHoliday(holiday.id)}
-                                className="h-8 w-8 p-0 text-red-600 hover:text-red-800 hover:bg-red-50"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
+                            {isMounted && !isEmployee ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setEditingHoliday(holiday)
+                                    setEditForm({
+                                      name: holiday.name,
+                                      date: holiday.holiday_date,
+                                      description: holiday.description || ''
+                                    })
+                                    setShowEditForm(true)
+                                  }}
+                                  className="h-8 w-8 p-0"
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteHoliday(holiday.id)}
+                                  className="h-8 w-8 p-0 text-red-600 hover:text-red-800 hover:bg-red-50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : isMounted && isEmployee ? (
+                              <span className="text-xs text-muted-foreground">Solo consulta</span>
+                            ) : null}
                           </TableCell>
                         </TableRow>
                       ))
@@ -660,14 +689,16 @@ export function HolidayManager({
             </TabsContent>
 
             {/* Contenido de carga masiva */}
-            <TabsContent value="bulk" className="mt-0">
-              <BulkHolidayUpload
-                officeCode={officeId}
-                officeName={officeName}
-                onConfirm={handleBulkUpload}
-                onClose={() => setActiveTab("calendar")}
-              />
-            </TabsContent>
+            {isMounted && !isEmployee && (
+              <TabsContent value="bulk" className="mt-0">
+                <BulkHolidayUpload
+                  officeCode={officeId}
+                  officeName={officeName}
+                  onConfirm={handleBulkUpload}
+                  onClose={() => setActiveTab("calendar")}
+                />
+              </TabsContent>
+            )}
           </Tabs>
         </div>
 

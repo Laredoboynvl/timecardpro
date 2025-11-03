@@ -4,15 +4,17 @@ import { AuthSession, OfficeUser, Office } from '@/lib/types/auth'
 
 interface UseAuthReturn {
   isAuthenticated: boolean
+  isLoading: boolean
   user: OfficeUser | null
   office: Office | null
   session: AuthSession | null
   isSPOC: boolean
   isRH: boolean
+  isEmployee: boolean
   canModify: boolean
   canView: boolean
   roleLabel: string
-  login: (credentials: { office_code: string; password: string; userType: 'spoc' | 'rh' }) => Promise<AuthSession>
+  login: (credentials: { office_code: string; password: string; userType: 'spoc' | 'rh' | 'employee' }) => Promise<AuthSession>
   logout: () => void
   renewSession: () => void
 }
@@ -20,18 +22,38 @@ interface UseAuthReturn {
 export function useAuth(): UseAuthReturn {
   const [session, setSession] = useState<AuthSession | null>(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    // Cargar sesión inicial
-    const currentSession = authService.getCurrentSession()
-    setSession(currentSession)
-    setIsAuthenticated(currentSession !== null)
+    // Función para cargar la sesión
+    const loadSession = () => {
+      try {
+        const currentSession = authService.getCurrentSession()
+        setSession(currentSession)
+        setIsAuthenticated(currentSession !== null)
+      } catch (error) {
+        console.error('Error al cargar sesión:', error)
+        setSession(null)
+        setIsAuthenticated(false)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    // Cargar sesión inicial solo en el cliente
+    if (typeof window !== 'undefined') {
+      loadSession()
+    } else {
+      setIsLoading(false)
+    }
 
     // Configurar listener para cambios de sesión (opcional)
     const checkSession = () => {
-      const currentSession = authService.getCurrentSession()
-      setSession(currentSession)
-      setIsAuthenticated(currentSession !== null)
+      if (typeof window !== 'undefined') {
+        const currentSession = authService.getCurrentSession()
+        setSession(currentSession)
+        setIsAuthenticated(currentSession !== null)
+      }
     }
 
     // Verificar sesión cada minuto
@@ -40,7 +62,7 @@ export function useAuth(): UseAuthReturn {
     return () => clearInterval(interval)
   }, [])
 
-  const login = async (credentials: { office_code: string; password: string; userType: 'spoc' | 'rh' }) => {
+  const login = async (credentials: { office_code: string; password: string; userType: 'spoc' | 'rh' | 'employee' }) => {
     try {
       const newSession = await authService.login(credentials)
       setSession(newSession)
@@ -67,11 +89,13 @@ export function useAuth(): UseAuthReturn {
 
   return {
     isAuthenticated,
+    isLoading,
     user: session?.user || null,
     office: session?.office || null,
     session,
     isSPOC: authService.isSPOC(),
     isRH: authService.isRH(),
+    isEmployee: authService.isEmployee(),
     canModify: authService.canModify(),
     canView: authService.canView(),
     roleLabel: authService.getRoleLabel(),
@@ -96,9 +120,8 @@ export function usePermissions() {
     canEditAttendance: auth.isSPOC,
     canDeleteAttendance: auth.isSPOC,
     
-    // Permisos de vacaciones - Solo SPOC
+    // Permisos de vacaciones - Solo SPOC para gestión
     canManageVacations: auth.isSPOC,
-    canApproveVacations: auth.isSPOC,
     canCreateVacations: auth.isSPOC,
     canDeleteVacations: auth.isSPOC,
     
@@ -111,7 +134,10 @@ export function usePermissions() {
     canDownloadData: auth.canView,
     
     // Información de usuario
-    userType: auth.isSPOC ? 'SPOC' : 'RH',
-    isReadOnly: auth.isRH
+    userType: auth.isSPOC ? 'SPOC' : auth.isRH ? 'RH' : 'EMPLOYEE',
+    isReadOnly: auth.isRH,
+    isEmployee: auth.isEmployee,
+    canRequestVacations: auth.isEmployee,
+    canApproveVacations: auth.isSPOC
   }
 }
