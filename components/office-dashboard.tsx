@@ -2579,6 +2579,7 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
                 </Tabs>
               </DialogContent>
             </Dialog>
+            )}
             <Dialog open={verificationMode} onOpenChange={setVerificationMode}>
               <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
@@ -2872,7 +2873,6 @@ export function OfficeDashboard({ officeId, officeName, initialEmployees = [] }:
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-            )}
           </div>
         </div>
       </div>
