@@ -1,6 +1,6 @@
 "use client"
 // Gestión de Vacaciones - Actualizado con colores de ciclos y botones siempre visibles
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { OfficeHeader } from "@/components/office-header"
 import { Button } from "@/components/ui/button"
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Select,
   SelectContent,
@@ -101,6 +102,26 @@ export default function VacacionesPage() {
   const office = OFFICES.find((o) => o.code.toLowerCase() === officeId.toLowerCase())
   const { toast } = useToast()
   const { isSPOC, isRH, isEmployee } = useAuth()
+
+  // Función helper para parsear fechas sin conversión UTC
+  // Las fechas de la BD vienen como "YYYY-MM-DD" y JS las interpreta como UTC medianoche
+  // Al convertir a zona horaria local (CST/CDT UTC-6) muestra el día anterior
+  // Esta función parsea la fecha manteniendo el día exacto sin conversión de zona horaria
+  const parseLocalDate = (dateString: string): Date => {
+    const [year, month, day] = dateString.split('-').map(Number)
+    return new Date(year, month - 1, day)
+  }
+
+  // Función para formatear fechas a string local legible
+  const formatLocalDate = (dateString: string): string => {
+    const date = parseLocalDate(dateString)
+    return date.toLocaleDateString('es-MX', { 
+      day: '2-digit', 
+      month: '2-digit', 
+      year: 'numeric',
+      timeZone: 'America/Matamoros' // Zona horaria de Matamoros (CST/CDT)
+    })
+  }
 
   // Función helper para convertir fecha a formato YYYY-MM-DD sin problemas de UTC
   const formatDateToLocalString = (date: Date): string => {
@@ -176,6 +197,61 @@ export default function VacacionesPage() {
   // Modal de detalle de solicitud
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedRequest, setSelectedRequest] = useState<VacationRequest | null>(null)
+  const [allowFutureCycleUsage, setAllowFutureCycleUsage] = useState(false)
+
+  const vacationMetrics = useMemo(() => {
+    if (!vacationCycles || vacationCycles.length === 0) {
+      return {
+        totalEarned: 0,
+        totalUsed: 0,
+        totalAvailable: 0,
+        expectedAvailable: 0,
+        favorDays: 0,
+        nextCycle: null as VacationCycle | null,
+        startedCycles: [] as VacationCycle[],
+      }
+    }
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    const eligibleCycles = vacationCycles
+      .filter((cycle) => !cycle.is_expired && Number(cycle.days_available ?? 0) > 0)
+      .sort((a, b) => parseLocalDate(a.cycle_start_date).getTime() - parseLocalDate(b.cycle_start_date).getTime())
+
+    let totalEarned = 0
+    let totalUsed = 0
+    let totalAvailable = 0
+
+    eligibleCycles.forEach((cycle) => {
+      totalEarned += Number(cycle.days_earned ?? 0)
+      totalUsed += Number(cycle.days_used ?? 0)
+      totalAvailable += Number(cycle.days_available ?? 0)
+    })
+
+    const expectedAvailable = Math.max(0, totalEarned - totalUsed)
+    const favorDays = Math.max(0, totalAvailable - expectedAvailable)
+
+    const startedCycles = eligibleCycles.filter((cycle) => parseLocalDate(cycle.cycle_start_date) <= today)
+    const nextCycle = eligibleCycles.find((cycle) => parseLocalDate(cycle.cycle_start_date) > today) ?? null
+
+    return {
+      totalEarned,
+      totalUsed,
+      totalAvailable,
+      expectedAvailable,
+      favorDays,
+      nextCycle,
+      startedCycles,
+    }
+  }, [vacationCycles])
+
+  const selectableCycles = useMemo(() => {
+    if (allowFutureCycleUsage && vacationMetrics.nextCycle) {
+      return [...vacationMetrics.startedCycles, vacationMetrics.nextCycle]
+    }
+    return vacationMetrics.startedCycles
+  }, [allowFutureCycleUsage, vacationMetrics.startedCycles, vacationMetrics.nextCycle])
 
   useEffect(() => {
     setIsMounted(true)
@@ -207,6 +283,22 @@ export default function VacacionesPage() {
   useEffect(() => {
     paginateRequests()
   }, [filteredRequests, currentPage, itemsPerPage])
+
+  useEffect(() => {
+    if (!showNewRequest) {
+      setAllowFutureCycleUsage(false)
+    }
+  }, [showNewRequest])
+
+  useEffect(() => {
+    if (allowFutureCycleUsage && !vacationMetrics.nextCycle) {
+      setAllowFutureCycleUsage(false)
+    }
+  }, [allowFutureCycleUsage, vacationMetrics.nextCycle])
+
+  useEffect(() => {
+    setAllowFutureCycleUsage(false)
+  }, [selectedEmployeeId])
 
   const paginateRequests = () => {
     // Ordenar por fecha de creación de la solicitud (más recientes primero)
@@ -369,33 +461,41 @@ export default function VacacionesPage() {
         return
       }
       
-      // Para fechas futuras, verificar disponibilidad solo en ciclos iniciados
-      const activeCycles = vacationCycles.filter(cycle => 
-        cycle.days_available > 0 && 
-        !cycle.is_expired && 
-        new Date(cycle.cycle_start_date) <= new Date() // Solo ciclos que ya iniciaron
-      )
-      const totalAvailable = activeCycles.reduce((total, cycle) => total + cycle.days_available, 0)
-      
-      if (selectedDates.length >= totalAvailable) {
-        const cyclesInfo = activeCycles
-          .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
-          .map(cycle => `Ciclo ${new Date(cycle.cycle_start_date).getFullYear()}: ${cycle.days_available} disponibles (${cycle.days_earned} por ley)`)
-          .join(', ')
-        
-        const futureNotAvailable = vacationCycles.filter(cycle => 
-          cycle.days_available > 0 && 
-          !cycle.is_expired && 
-          new Date(cycle.cycle_start_date) > new Date()
-        )
-        
-        const futureInfo = futureNotAvailable.length > 0 
-          ? ` Ciclos futuros no disponibles aún: ${futureNotAvailable.map(c => new Date(c.cycle_start_date).getFullYear()).join(', ')}`
-          : ''
-        
+      // Para fechas futuras, verificar disponibilidad según los ciclos seleccionables
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+
+      const futureSelections = selectedDates.filter(selectedDate => selectedDate >= today).length
+      const totalAvailable = selectableCycles.reduce((total, cycle) => total + (cycle.days_available ?? 0), 0)
+
+      if (totalAvailable <= 0) {
+        const nextHint = !allowFutureCycleUsage && vacationMetrics.nextCycle
+          ? ` Activa la casilla "Usar próximo ciclo" para habilitar el ciclo ${parseLocalDate(vacationMetrics.nextCycle.cycle_start_date).getFullYear()}.`
+          : ""
+
         toast({
-          title: "Sin días disponibles", 
-          description: `No puedes seleccionar más días. ${cyclesInfo}${futureInfo}`,
+          title: "Sin días disponibles",
+          description: `Los ciclos activos ya no tienen días disponibles.${nextHint}`,
+          variant: "destructive"
+        })
+        return
+      }
+
+      if (futureSelections >= totalAvailable) {
+        const cyclesInfo = selectableCycles
+          .map(cycle => {
+            const year = parseLocalDate(cycle.cycle_start_date).getFullYear()
+            return `Ciclo ${year}: ${cycle.days_available} disponibles (${cycle.days_earned} por ley)`
+          })
+          .join(', ')
+
+        const nextHint = !allowFutureCycleUsage && vacationMetrics.nextCycle
+          ? ` Puedes habilitar el ciclo ${parseLocalDate(vacationMetrics.nextCycle.cycle_start_date).getFullYear()} con la casilla "Usar próximo ciclo".`
+          : ""
+
+        toast({
+          title: "Sin días disponibles",
+          description: `No puedes seleccionar más días futuros. ${cyclesInfo}.${nextHint}`,
           variant: "destructive"
         })
         return
@@ -407,25 +507,21 @@ export default function VacacionesPage() {
 
   // Función para determinar de qué ciclo viene cada día y su color
   const getDateCycleColor = (dateIndex: number) => {
-    if (vacationCycles.length === 0) return 'bg-primary'
-    
-    // Simular distribución de días desde ciclos más antiguos
+    if (selectableCycles.length === 0) return 'bg-primary'
+
     let remainingDays = dateIndex + 1
     let currentCycleIndex = 0
-    
-    const availableCycles = vacationCycles
-      .filter(cycle => cycle.days_available > 0 && !cycle.is_expired)
-      .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
-    
-    for (let i = 0; i < availableCycles.length; i++) {
-      const cycle = availableCycles[i]
-      if (remainingDays <= cycle.days_available) {
+
+    for (let i = 0; i < selectableCycles.length; i++) {
+      const cycle = selectableCycles[i]
+      const availableForCycle = Number(cycle.days_available ?? 0)
+      if (remainingDays <= availableForCycle) {
         currentCycleIndex = i
         break
       }
-      remainingDays -= cycle.days_available
+      remainingDays -= availableForCycle
     }
-    
+
     // Colores para diferentes ciclos
     const colors = [
       'bg-blue-500',    // Ciclo más antiguo - azul
@@ -440,22 +536,19 @@ export default function VacacionesPage() {
 
   // Función para obtener información del ciclo de un día específico
   const getDateCycleInfo = (dateIndex: number) => {
-    if (vacationCycles.length === 0) return 'Día seleccionado'
-    
+    if (selectableCycles.length === 0) return 'Día seleccionado'
+
     let remainingDays = dateIndex + 1
-    
-    const availableCycles = vacationCycles
-      .filter(cycle => cycle.days_available > 0 && !cycle.is_expired)
-      .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
-    
-    for (let i = 0; i < availableCycles.length; i++) {
-      const cycle = availableCycles[i]
-      if (remainingDays <= cycle.days_available) {
-        return `Ciclo ${new Date(cycle.cycle_start_date).getFullYear()}`
+
+    for (let i = 0; i < selectableCycles.length; i++) {
+      const cycle = selectableCycles[i]
+      const availableForCycle = Number(cycle.days_available ?? 0)
+      if (remainingDays <= availableForCycle) {
+        return `Ciclo ${parseLocalDate(cycle.cycle_start_date).getFullYear()}`
       }
-      remainingDays -= cycle.days_available
+      remainingDays -= availableForCycle
     }
-    
+
     return 'Día seleccionado'
   }
 
@@ -1022,18 +1115,20 @@ export default function VacacionesPage() {
     const futureDates = selectedDates.filter(date => date >= today)
     
     // Para fechas futuras, verificar disponibilidad
-    const activeCycles = vacationCycles.filter(cycle => cycle.days_available > 0 && !cycle.is_expired)
-    const totalAvailable = activeCycles.reduce((total, cycle) => total + cycle.days_available, 0)
+    const totalAvailable = selectableCycles.reduce((total, cycle) => total + (cycle.days_available ?? 0), 0)
     
     if (futureDates.length > totalAvailable) {
-      const cyclesDetails = activeCycles
-        .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
-        .map(cycle => `Ciclo ${new Date(cycle.cycle_start_date).getFullYear()}: ${cycle.days_available} disponibles (${cycle.days_earned} por ley)`)
+      const cyclesDetails = selectableCycles
+        .map(cycle => `Ciclo ${parseLocalDate(cycle.cycle_start_date).getFullYear()}: ${cycle.days_available} disponibles (${cycle.days_earned} por ley)`)
         .join(', ')
-      
+
+      const nextHint = !allowFutureCycleUsage && vacationMetrics.nextCycle
+        ? ` Puedes habilitar el ciclo ${parseLocalDate(vacationMetrics.nextCycle.cycle_start_date).getFullYear()} con la casilla "Usar próximo ciclo".`
+        : ""
+
       toast({
         title: "Días insuficientes para fechas futuras",
-        description: `Seleccionaste ${futureDates.length} días futuros. Días disponibles por ciclo: ${cyclesDetails}. Las fechas pasadas (${pastDates.length}) se registrarán solo como referencia.`,
+        description: `Seleccionaste ${futureDates.length} días futuros. Días disponibles por ciclo: ${cyclesDetails}. Las fechas pasadas (${pastDates.length}) se registrarán solo como referencia.${nextHint}`,
         variant: "destructive"
       })
       return
@@ -1611,8 +1706,8 @@ export default function VacacionesPage() {
                                   .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
                                   .map((cycle, index) => {
                                     const today = new Date()
-                                    const startDate = new Date(cycle.cycle_start_date)
-                                    const endDate = new Date(cycle.cycle_end_date)
+                                    const startDate = parseLocalDate(cycle.cycle_start_date)
+                                    const endDate = parseLocalDate(cycle.cycle_end_date)
                                     
                                     const daysUntilExpiry = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
                                     const isExpiringSoon = daysUntilExpiry <= 60 && daysUntilExpiry > 0
@@ -1644,7 +1739,7 @@ export default function VacacionesPage() {
                                             isExpiringSoon ? 'text-red-700' :
                                             hasAvailableDays ? 'text-green-700' : 'text-orange-700'
                                           }`}>
-                                            Ciclo {new Date(cycle.cycle_start_date).getFullYear()}
+                                            Ciclo {parseLocalDate(cycle.cycle_start_date).getFullYear()}
                                           </span>
                                           <div className="flex gap-1">
                                             {isExpired && (
@@ -1678,7 +1773,7 @@ export default function VacacionesPage() {
                                         {/* Fechas del ciclo */}
                                         <div className="text-xs text-gray-600 mb-2">
                                           <div>
-                                            {new Date(cycle.cycle_start_date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })} - {new Date(cycle.cycle_end_date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                            {formatLocalDate(cycle.cycle_start_date)} - {formatLocalDate(cycle.cycle_end_date)}
                                           </div>
                                         </div>
                                         
@@ -1955,7 +2050,7 @@ export default function VacacionesPage() {
                             </div>
                             <div>
                               <div>Vida del ciclo:</div>
-                              <div>{new Date(cycle.cycle_start_date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })} - {new Date(cycle.cycle_end_date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</div>
+                              <div>{formatLocalDate(cycle.cycle_start_date)} - {formatLocalDate(cycle.cycle_end_date)}</div>
                             </div>
                           </div>
                         </div>
@@ -2075,20 +2170,22 @@ export default function VacacionesPage() {
                 </Select>
               </div>
 
-              {/* Ciclos de Vacaciones - Mostrar TODOS los ciclos con días disponibles */}
+              {/* Ciclos de Vacaciones - Mostrar TODOS los ciclos (históricos, actuales y futuros) */}
               {selectedEmployeeId && vacationCycles.length > 0 && (
                 <div className="space-y-3">
                   <div>
-                    <Label>Ciclos de Vacaciones Disponibles</Label>
+                    <Label>Ciclos de Vacaciones (Histórico, Actual y Futuros)</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Se muestran todos los ciclos: expirados, activos, no iniciados y futuros
+                    </p>
                   </div>
                   <div className="space-y-2">
                     {vacationCycles
-                      .filter(cycle => !cycle.is_expired)
                       .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
                       .map((cycle) => {
                         const today = new Date()
-                        const cycleEnd = new Date(cycle.cycle_end_date)
-                        const cycleStart = new Date(cycle.cycle_start_date)
+                        const cycleEnd = parseLocalDate(cycle.cycle_end_date)
+                        const cycleStart = parseLocalDate(cycle.cycle_start_date)
                         const daysUntilExpiry = Math.ceil((cycleEnd.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
                         
                         const isExpired = cycle.is_expired || cycleEnd < today
@@ -2139,11 +2236,11 @@ export default function VacacionesPage() {
                           <div key={cycle.id} className={`flex items-center justify-between p-4 border rounded-lg ${bgClass}`}>
                             <div>
                               <div className="flex items-center gap-2">
-                                <p className="font-medium">Ciclo {new Date(cycle.cycle_start_date).getFullYear()}</p>
+                                <p className="font-medium">Ciclo {parseLocalDate(cycle.cycle_start_date).getFullYear()}</p>
                                 <Badge variant={badgeVariant} className={badgeClassName}>{badgeText}</Badge>
                               </div>
                               <p className="text-sm text-muted-foreground">
-                                {new Date(cycle.cycle_start_date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })} - {new Date(cycle.cycle_end_date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                {formatLocalDate(cycle.cycle_start_date)} - {formatLocalDate(cycle.cycle_end_date)}
                               </p>
                             </div>
                             <div className="text-right">
@@ -2169,8 +2266,29 @@ export default function VacacionesPage() {
                 </div>
               )}
 
+              {vacationMetrics.nextCycle && (
+                <div className="rounded-lg border border-dashed border-blue-200 bg-blue-50/60 p-3 dark:border-blue-900/40 dark:bg-blue-950/20">
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      id="allowFutureCycle"
+                      checked={allowFutureCycleUsage}
+                      onCheckedChange={(value) => setAllowFutureCycleUsage(value === true)}
+                      className="mt-1"
+                    />
+                    <div className="space-y-1 text-sm">
+                      <Label htmlFor="allowFutureCycle" className="font-medium text-blue-900 dark:text-blue-100">
+                        Usar próximo ciclo ({parseLocalDate(vacationMetrics.nextCycle.cycle_start_date).getFullYear()})
+                      </Label>
+                      <p className="text-xs text-blue-800 dark:text-blue-200">
+                        Permite tomar hasta {vacationMetrics.nextCycle.days_available} días del ciclo {parseLocalDate(vacationMetrics.nextCycle.cycle_start_date).getFullYear()} aunque aún no inicie. Los días del ciclo actual se descontarán primero.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Mensaje cuando no hay días disponibles */}
-              {selectedEmployeeId && vacationCycles.length > 0 && vacationCycles.filter(cycle => cycle.days_available > 0 && !cycle.is_expired && new Date(cycle.cycle_start_date) <= new Date()).length === 0 && (
+              {selectedEmployeeId && vacationCycles.length > 0 && vacationMetrics.startedCycles.length === 0 && (
                 <div className="text-center p-4 border border-orange-200 rounded-lg bg-orange-50 dark:bg-orange-950/50">
                   <p className="text-orange-800 dark:text-orange-200 font-medium">
                     ⚠️ No hay días de vacaciones disponibles
@@ -2178,6 +2296,11 @@ export default function VacacionesPage() {
                   <p className="text-sm text-orange-600 dark:text-orange-300">
                     Todos los ciclos están agotados o han expirado. Use el botón "Control de Días" para agregar días si es necesario.
                   </p>
+                  {!allowFutureCycleUsage && vacationMetrics.nextCycle && (
+                    <p className="text-xs text-blue-700 dark:text-blue-200 mt-2">
+                      También puedes activar "Usar próximo ciclo" para tomar días del ciclo {parseLocalDate(vacationMetrics.nextCycle.cycle_start_date).getFullYear()}.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -2275,7 +2398,7 @@ export default function VacacionesPage() {
                     today.setHours(0, 0, 0, 0);
                     const futureDates = selectedDates.filter(date => date >= today);
                     const pastDates = selectedDates.filter(date => date < today);
-                    const totalAvailableDays = vacationCycles.filter(c => c.days_available > 0 && !c.is_expired).reduce((total, cycle) => total + cycle.days_available, 0);
+                    const totalAvailableDays = selectableCycles.reduce((total, cycle) => total + (cycle.days_available ?? 0), 0);
                     
                     return futureDates.length > totalAvailableDays && (
                       <div className="text-xs text-red-600 bg-red-50 dark:bg-red-950/50 p-2 rounded border border-red-200">
@@ -2284,18 +2407,19 @@ export default function VacacionesPage() {
                           <div>Días futuros seleccionados: <strong>{futureDates.length}</strong></div>
                           {pastDates.length > 0 && <div>Días pasados (solo referencia): <strong>{pastDates.length}</strong></div>}
                           <div>Días por ciclo:</div>
-                          {vacationCycles
-                            .filter(c => c.days_available > 0 && !c.is_expired)
-                            .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
-                            .map((cycle) => (
-                              <div key={cycle.id} className="ml-2">
-                                • Ciclo {new Date(cycle.cycle_start_date).getFullYear()}: {cycle.days_available} disponibles ({cycle.days_earned} por ley)
-                              </div>
-                            ))
-                          }
+                          {selectableCycles.map((cycle) => (
+                            <div key={cycle.id} className="ml-2">
+                              • Ciclo {parseLocalDate(cycle.cycle_start_date).getFullYear()}: {cycle.days_available} disponibles ({cycle.days_earned} por ley)
+                            </div>
+                          ))}
                           <div className="font-medium text-red-700 border-t pt-1 mt-1">
                             Días faltantes para fechas futuras: <strong>{futureDates.length - totalAvailableDays}</strong>
                           </div>
+                          {!allowFutureCycleUsage && vacationMetrics.nextCycle && (
+                            <div className="text-blue-700 dark:text-blue-300">
+                              Activa "Usar próximo ciclo" para acceder al ciclo {parseLocalDate(vacationMetrics.nextCycle.cycle_start_date).getFullYear()}.
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -2419,19 +2543,17 @@ export default function VacacionesPage() {
                 {/* Leyenda actualizada */}
                 <div className="space-y-2 mt-3 text-xs">
                   {/* Leyenda de colores por ciclo */}
-                  {vacationCycles.filter(c => c.days_available > 0 && !c.is_expired).length > 0 && (
+                  {selectableCycles.length > 0 && (
                     <div className="flex items-center gap-3 flex-wrap">
                       <span className="text-muted-foreground font-medium">Colores por ciclo:</span>
-                      {vacationCycles
-                        .filter(c => c.days_available > 0 && !c.is_expired)
-                        .sort((a, b) => new Date(a.cycle_start_date).getTime() - new Date(b.cycle_start_date).getTime())
+                      {selectableCycles
                         .map((cycle, index) => {
                           const colors = ['bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-orange-500', 'bg-pink-500']
                           const color = colors[index % colors.length]
                           return (
                             <div key={cycle.id} className="flex items-center gap-1">
                               <div className={`w-3 h-3 rounded ${color}`}></div>
-                              <span>Ciclo {new Date(cycle.cycle_start_date).getFullYear()} ({cycle.days_available}d)</span>
+                              <span>Ciclo {parseLocalDate(cycle.cycle_start_date).getFullYear()} ({cycle.days_available}d)</span>
                             </div>
                           )
                         })
@@ -2564,6 +2686,37 @@ export default function VacacionesPage() {
           </DialogHeader>
           
           <div className="grid gap-4 py-4">
+            {vacationCycles.length > 0 && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm dark:border-blue-900/40 dark:bg-blue-950/40">
+                {vacationMetrics.nextCycle && (
+                  <div className="mb-2">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-300">Próximo ciclo</div>
+                    <div className="flex flex-wrap gap-2 text-blue-800 dark:text-blue-200">
+                      <span>
+                        {formatLocalDate(vacationMetrics.nextCycle.cycle_start_date)} → {formatLocalDate(vacationMetrics.nextCycle.cycle_end_date)}
+                      </span>
+                      <span>({vacationMetrics.nextCycle.days_earned} días por ley)</span>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-300">Días a favor</div>
+                  <div className="text-base font-semibold text-blue-900 dark:text-blue-100">
+                    {vacationMetrics.favorDays} día{vacationMetrics.favorDays === 1 ? '' : 's'} extra disponible{vacationMetrics.favorDays === 1 ? '' : 's'}
+                  </div>
+                  <div className="text-xs text-blue-700 dark:text-blue-200">
+                    Disponibles actuales: {vacationMetrics.totalAvailable}. Por ley después de usos: {vacationMetrics.expectedAvailable}.
+                  </div>
+                  {controlAction === 'add' && controlDays > 0 && (
+                    <div className="mt-1 text-xs text-green-700 dark:text-green-300">
+                      Tras agregar {controlDays} día{controlDays === 1 ? '' : 's'} tendrás {vacationMetrics.favorDays + controlDays} día{vacationMetrics.favorDays + controlDays === 1 ? '' : 's'} a favor.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Modo de control (solo para descontar) */}
             {controlAction === 'remove' && (
               <div className="grid gap-2">
@@ -2854,8 +3007,8 @@ export default function VacacionesPage() {
                     .sort((a, b) => new Date(b.cycle_start_date).getTime() - new Date(a.cycle_start_date).getTime())
                     .map((cycle) => {
                       const today = new Date()
-                      const startDate = new Date(cycle.cycle_start_date)
-                      const endDate = new Date(cycle.cycle_end_date)
+                      const startDate = parseLocalDate(cycle.cycle_start_date)
+                      const endDate = parseLocalDate(cycle.cycle_end_date)
                       const isExpired = endDate < today
                       const isNotStarted = startDate > today
                       const isActive = !isExpired && !isNotStarted
@@ -2888,11 +3041,11 @@ export default function VacacionesPage() {
                         <div key={cycle.id} className={`p-4 border rounded-lg ${cycleStyle}`}>
                           <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-2">
-                              <h5 className="font-semibold">Ciclo {new Date(cycle.cycle_start_date).getFullYear()}</h5>
+                              <h5 className="font-semibold">Ciclo {parseLocalDate(cycle.cycle_start_date).getFullYear()}</h5>
                               {statusBadge}
                             </div>
                             <div className="text-sm text-muted-foreground">
-                              {new Date(cycle.cycle_start_date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })} - {new Date(cycle.cycle_end_date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                              {formatLocalDate(cycle.cycle_start_date)} - {formatLocalDate(cycle.cycle_end_date)}
                             </div>
                           </div>
                           

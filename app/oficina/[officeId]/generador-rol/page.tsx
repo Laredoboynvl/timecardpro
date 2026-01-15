@@ -62,6 +62,7 @@ import { createClientSupabaseClient } from "@/lib/supabase/client"
 import { mapOfficeIdToUUID } from "@/lib/utils/office-mapping"
 import { useToast } from "@/hooks/use-toast"
 import {
+  Clock,
   ClipboardList,
   History,
   Loader2,
@@ -166,6 +167,10 @@ interface MealSlotConfig {
   capacity: number
   appliesTo: UnitPositionId[]
   enabled: boolean
+  fixedEmployeeIds: string[]
+  // Capacidad específica por unidad
+  operationCapacity?: number
+  pickpackCapacity?: number
 }
 
 type DailyMealAssignments = Record<string, Record<string, string[]>>
@@ -1410,57 +1415,82 @@ export default function GeneradorRolPage() {
       }
       
       const rotationData = JSON.parse(stored)
-      // Verificar que el supervisor todavía existe y está activo
-      const supervisor = employees.find(emp => emp.id === rotationData.supervisorId && emp.active !== false)
       
-      if (supervisor && rotationData.weekStartDate !== weekStartDate) {
-        setPreviousWeekConsulateSupervisor(rotationData.supervisorId)
+      // Verificar que todos los supervisores todavía existen y están activos
+      const consuladoSupervisor = rotationData.consuladoSupervisorId 
+        ? employees.find(emp => emp.id === rotationData.consuladoSupervisorId && emp.active !== false)
+        : null
+      const cas1Supervisor = rotationData.cas1SupervisorId
+        ? employees.find(emp => emp.id === rotationData.cas1SupervisorId && emp.active !== false)
+        : null
+      const cas2Supervisor = rotationData.cas2SupervisorId
+        ? employees.find(emp => emp.id === rotationData.cas2SupervisorId && emp.active !== false)
+        : null
+      
+      if (rotationData.weekStartDate !== weekStartDate && (consuladoSupervisor || cas1Supervisor || cas2Supervisor)) {
+        const rotatedIds = []
+        const rotatedNames = []
         
-        // ROTACIÓN AUTOMÁTICA: Asignar automáticamente al supervisor a CAS con horario de apertura
+        // ROTACIÓN CIRCULAR COMPLETA:
+        // Consulado → CAS 1º puesto
+        // CAS 1º → CAS 2º puesto  
+        // CAS 2º → Consulado
         setAssignments(prev => {
           const newAssignments = { ...prev }
+          const newCasSupervisors = []
+          const newConsuladoSupervisors = []
           
-          // Obtener los supervisores CAS actuales
-          const currentCasSupervisors = newAssignments.CAS_SUPERVISOR || []
-          
-          // Si el supervisor no está ya asignado a CAS, agregarlo al principio
-          if (!currentCasSupervisors.includes(rotationData.supervisorId)) {
-            // Removerlo de Consulado si está ahí
-            if (newAssignments.CONSULATE_SUPERVISOR) {
-              newAssignments.CONSULATE_SUPERVISOR = newAssignments.CONSULATE_SUPERVISOR.filter(
-                id => id !== rotationData.supervisorId
-              )
-            }
-            
-            // Agregarlo al inicio de CAS_SUPERVISOR (prioridad para horario de apertura)
-            newAssignments.CAS_SUPERVISOR = [rotationData.supervisorId, ...currentCasSupervisors]
-            
-            console.log("✅ Rotación automática aplicada:", {
-              supervisor: rotationData.supervisorName,
-              de: "Consulado (semana anterior)",
-              a: "Supervisor CAS (horario de apertura)"
-            })
+          // 1. Consulado → CAS 1º puesto (horario apertura)
+          if (consuladoSupervisor) {
+            newCasSupervisors.push(rotationData.consuladoSupervisorId)
+            rotatedIds.push(rotationData.consuladoSupervisorId)
+            rotatedNames.push(`${rotationData.consuladoSupervisorName}: Consulado → CAS 1º`)
           }
+          
+          // 2. CAS 1º → CAS 2º puesto
+          if (cas1Supervisor) {
+            newCasSupervisors.push(rotationData.cas1SupervisorId)
+            rotatedIds.push(rotationData.cas1SupervisorId)
+            rotatedNames.push(`${rotationData.cas1SupervisorName}: CAS 1º → CAS 2º`)
+          }
+          
+          // 3. CAS 2º → Consulado
+          if (cas2Supervisor) {
+            newConsuladoSupervisors.push(rotationData.cas2SupervisorId)
+            rotatedIds.push(rotationData.cas2SupervisorId)
+            rotatedNames.push(`${rotationData.cas2SupervisorName}: CAS 2º → Consulado`)
+          }
+          
+          // Asignar los nuevos arrays
+          newAssignments.CAS_SUPERVISOR = newCasSupervisors
+          newAssignments.CONSULATE_SUPERVISOR = newConsuladoSupervisors
+          
+          console.log("✅ Rotación circular automática aplicada:", {
+            rotaciones: rotatedNames
+          })
           
           return newAssignments
         })
         
-        // Asegurar que el plan de horarios use el primer horario (índice 0) para este supervisor
+        // Asegurar que el plan de horarios use el primer horario (índice 0) para el primer supervisor CAS
         setWeeklySchedulePlan(prev => {
           const newPlan = { ...prev }
-          // Configurar todos los días de la semana para usar el primer horario (apertura)
           if (newPlan.CAS && newPlan.CAS.supervisors) {
-            newPlan.CAS.supervisors = newPlan.CAS.supervisors.map(() => 0) // Índice 0 = primer horario
+            newPlan.CAS.supervisors = newPlan.CAS.supervisors.map(() => 0)
           }
           return newPlan
         })
         
         // Mostrar notificación de éxito
-        toast({
-          title: "🔄 Rotación Automática Aplicada",
-          description: `${rotationData.supervisorName} fue asignado automáticamente a Supervisor CAS con horario de apertura (estuvo en Consulado la semana anterior).`,
-          duration: 6000,
-        })
+        if (rotatedNames.length > 0) {
+          toast({
+            title: "🔄 Rotación Circular Automática Aplicada",
+            description: rotatedNames.join(" • "),
+            duration: 8000,
+          })
+        }
+        
+        setPreviousWeekConsulateSupervisor(rotationData.consuladoSupervisorId || null)
       } else {
         setPreviousWeekConsulateSupervisor(null)
       }
@@ -2978,54 +3008,74 @@ export default function GeneradorRolPage() {
         assignments[dayKey] = {}
 
         activeSlots.forEach((slot) => {
-          const capacity = Math.max(0, Math.floor(slot.capacity))
-          if (capacity === 0) {
+          const operationCap = Math.max(0, Math.floor(slot.operationCapacity ?? 0))
+          const pickpackCap = Math.max(0, Math.floor(slot.pickpackCapacity ?? 0))
+          const totalCapacity = operationCap + pickpackCap
+
+          if (totalCapacity === 0) {
             assignments[dayKey][slot.id] = []
             return
           }
 
-          const appliesTo: UnitPositionId[] =
-            slot.appliesTo.length > 0 ? slot.appliesTo : (["OPERATION"] as UnitPositionId[])
-          const pool = new Set<string>()
+          // Crear pools separados por unidad
+          const operationPool = new Set<string>()
+          const pickpackPool = new Set<string>()
 
-          appliesTo.forEach((unitId) => {
-            const unitEmployees = new Set<string>(unitAssignments[unitId] || [])
-            if (unitId === "OPERATION") {
-              ;(baseAssignments.CAS_SUPERVISOR || []).forEach((employeeId) => unitEmployees.add(employeeId))
-            }
-            if (unitId === "PICKPACK") {
-              ;(baseAssignments.PICKPACK_SUPERVISOR || []).forEach((employeeId) => unitEmployees.add(employeeId))
-              ;(baseAssignments.PICKPACK_PASSBACK || []).forEach((employeeId) => unitEmployees.add(employeeId))
-            }
+          // Pool de Operación (incluye CAS supervisores)
+          const operationEmployees = new Set<string>(unitAssignments["OPERATION"] || [])
+          ;(baseAssignments.CAS_SUPERVISOR || []).forEach((employeeId) => operationEmployees.add(employeeId))
+          
+          operationEmployees.forEach((employeeId) => {
+            if (vacationMap[employeeId]?.has(dayKey)) return
+            if (dayIndex === SATURDAY_INDEX && saturdayRestingEmployeeIds.has(employeeId)) return
+            operationPool.add(employeeId)
+          })
 
-            unitEmployees.forEach((employeeId) => {
-              if (vacationMap[employeeId]?.has(dayKey)) return
-              if (dayIndex === SATURDAY_INDEX && saturdayRestingEmployeeIds.has(employeeId)) return
-              pool.add(employeeId)
-            })
+          // Pool de Pick & Pack (incluye supervisores y passback)
+          const pickpackEmployees = new Set<string>(unitAssignments["PICKPACK"] || [])
+          ;(baseAssignments.PICKPACK_SUPERVISOR || []).forEach((employeeId) => pickpackEmployees.add(employeeId))
+          ;(baseAssignments.PICKPACK_PASSBACK || []).forEach((employeeId) => pickpackEmployees.add(employeeId))
+          
+          pickpackEmployees.forEach((employeeId) => {
+            if (vacationMap[employeeId]?.has(dayKey)) return
+            if (dayIndex === SATURDAY_INDEX && saturdayRestingEmployeeIds.has(employeeId)) return
+            pickpackPool.add(employeeId)
           })
 
           const selected: string[] = []
+
+          // 1. Asignar colaboradores fijos primero (respetando su área)
           const normalizedFixedIds = Array.isArray(slot.fixedEmployeeIds)
             ? Array.from(new Set(slot.fixedEmployeeIds))
             : []
 
           for (const employeeId of normalizedFixedIds) {
-            if (selected.length >= capacity) break
+            if (selected.length >= totalCapacity) break
             if (usedToday.has(employeeId)) continue
             if (vacationMap[employeeId]?.has(dayKey)) continue
             if (dayIndex === SATURDAY_INDEX && saturdayRestingEmployeeIds.has(employeeId)) continue
             selected.push(employeeId)
             usedToday.add(employeeId)
-            pool.delete(employeeId)
+            operationPool.delete(employeeId)
+            pickpackPool.delete(employeeId)
           }
 
-          if (selected.length < capacity) {
-            const needed = capacity - selected.length
-            const available = shuffleArray(Array.from(pool)).filter((employeeId) => !usedToday.has(employeeId))
-            const picked = available.slice(0, needed)
-            selected.push(...picked)
-            picked.forEach((employeeId) => usedToday.add(employeeId))
+          // 2. Asignar de Operación hasta alcanzar su capacidad
+          if (operationCap > 0) {
+            const operationNeeded = operationCap
+            const operationAvailable = shuffleArray(Array.from(operationPool)).filter((employeeId) => !usedToday.has(employeeId))
+            const operationPicked = operationAvailable.slice(0, operationNeeded)
+            selected.push(...operationPicked)
+            operationPicked.forEach((employeeId) => usedToday.add(employeeId))
+          }
+
+          // 3. Asignar de Pick & Pack hasta alcanzar su capacidad
+          if (pickpackCap > 0) {
+            const pickpackNeeded = pickpackCap
+            const pickpackAvailable = shuffleArray(Array.from(pickpackPool)).filter((employeeId) => !usedToday.has(employeeId))
+            const pickpackPicked = pickpackAvailable.slice(0, pickpackNeeded)
+            selected.push(...pickpackPicked)
+            pickpackPicked.forEach((employeeId) => usedToday.add(employeeId))
           }
 
           assignments[dayKey][slot.id] = selected
@@ -3400,11 +3450,13 @@ export default function GeneradorRolPage() {
         id: createMealSlotId(),
         label: `Bloque ${prev.length + 1}`,
         startTime: "12:00",
-        endTime: "12:30",
-        capacity: 2,
+        endTime: "13:00", // Bloque de 1 hora por defecto
+        capacity: 4, // Capacidad total por defecto
         appliesTo: ["OPERATION", "PICKPACK"],
         enabled: true,
         fixedEmployeeIds: [],
+        operationCapacity: 2, // 2 de Operación por defecto
+        pickpackCapacity: 2,  // 2 de Pick & Pack por defecto
       }
       return [...prev, defaultSlot]
     })
@@ -3418,6 +3470,18 @@ export default function GeneradorRolPage() {
     const parsed = Number.parseInt(value, 10)
     const sanitized = Number.isNaN(parsed) ? 0 : Math.max(0, parsed)
     mutateMealSlotDraft(slotId, (slot) => ({ ...slot, capacity: sanitized }))
+  }
+
+  const handleMealSlotOperationCapacityChange = (slotId: string, value: string) => {
+    const parsed = Number.parseInt(value, 10)
+    const sanitized = Number.isNaN(parsed) ? 0 : Math.max(0, parsed)
+    mutateMealSlotDraft(slotId, (slot) => ({ ...slot, operationCapacity: sanitized }))
+  }
+
+  const handleMealSlotPickpackCapacityChange = (slotId: string, value: string) => {
+    const parsed = Number.parseInt(value, 10)
+    const sanitized = Number.isNaN(parsed) ? 0 : Math.max(0, parsed)
+    mutateMealSlotDraft(slotId, (slot) => ({ ...slot, pickpackCapacity: sanitized }))
   }
 
   const handleToggleMealSlotEnabled = (slotId: string, checked: boolean | "indeterminate") => {
@@ -4664,6 +4728,73 @@ export default function GeneradorRolPage() {
     })
   }
 
+  const handleDeleteRole = (roleId: string) => {
+    if (typeof window !== "undefined") {
+      const role = savedRoles.find(r => r.id === roleId)
+      const confirmed = window.confirm(
+        `¿Eliminar el rol de la ${role?.weekRangeLabel || 'semana'}? Esta acción no se puede deshacer.`
+      )
+      if (!confirmed) return
+    }
+
+    setSavedRoles((prev) => prev.filter((role) => role.id !== roleId))
+    toast({
+      title: "Rol eliminado",
+      description: "El rol fue eliminado del historial.",
+    })
+  }
+
+  const handleSetAsLastRole = (roleId: string) => {
+    const role = savedRoles.find(r => r.id === roleId)
+    if (!role) return
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `¿Marcar el rol de la ${role.weekRangeLabel} como base para la próxima rotación?\n\nEsto configurará los supervisores de CAS y Consulado de este rol como punto de partida para la rotación automática.`
+      )
+      if (!confirmed) return
+    }
+
+    // Obtener supervisores del rol seleccionado
+    const consuladoAssignment = role.assignments.find(a => a.position === 'CONSULATE_SUPERVISOR')
+    const casSupervisors = role.assignments.filter(a => a.position === 'CAS_SUPERVISOR')
+    
+    const consuladoSupervisorId = consuladoAssignment?.employeeId || null
+    const cas1SupervisorId = casSupervisors[0]?.employeeId || null
+    const cas2SupervisorId = casSupervisors[1]?.employeeId || null
+
+    if (!consuladoSupervisorId && !cas1SupervisorId && !cas2SupervisorId) {
+      toast({
+        title: "No se puede aplicar",
+        description: "Este rol no tiene supervisores asignados para la rotación.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Guardar en localStorage como base de rotación
+    if (consulateSupervisorRotationKey && typeof window !== "undefined") {
+      const rotationData = {
+        weekStartDate: role.weekStartDate,
+        consuladoSupervisorId,
+        consuladoSupervisorName: consuladoAssignment?.displayName || null,
+        cas1SupervisorId,
+        cas1SupervisorName: casSupervisors[0]?.displayName || null,
+        cas2SupervisorId,
+        cas2SupervisorName: casSupervisors[1]?.displayName || null,
+        savedAt: new Date().toISOString(),
+        markedAsBase: true
+      }
+      
+      window.localStorage.setItem(consulateSupervisorRotationKey, JSON.stringify(rotationData))
+      
+      toast({
+        title: "✅ Rol marcado como base",
+        description: `El rol de la ${role.weekRangeLabel} será la base para la próxima rotación automática.`,
+      })
+    }
+  }
+
   const handleClearAssignments = () => {
     if (typeof window !== "undefined") {
       const confirmed = window.confirm(
@@ -5025,21 +5156,40 @@ export default function GeneradorRolPage() {
       const snapshot = buildRoleSnapshot()
       setSavedRoles((prev) => [snapshot, ...prev.filter((role) => role.id !== snapshot.id)].slice(0, 20))
       
-      // Guardar el supervisor asignado a Consulado para la próxima semana
+      // Guardar todos los supervisores para la rotación circular de la próxima semana
       const consulateSupervisorIds = assignments.CONSULATE_SUPERVISOR || []
-      if (consulateSupervisorIds.length > 0 && consulateSupervisorRotationKey && typeof window !== "undefined") {
-        const consulateSupervisorId = consulateSupervisorIds[0]
-        const consulateSupervisor = employeeMap.get(consulateSupervisorId)
-        if (consulateSupervisor) {
-          const rotationData = {
-            weekStartDate,
-            supervisorId: consulateSupervisorId,
-            supervisorName: getEmployeeDisplayName(consulateSupervisor),
-            savedAt: new Date().toISOString()
-          }
-          window.localStorage.setItem(consulateSupervisorRotationKey, JSON.stringify(rotationData))
-          console.log("✅ Supervisor de Consulado guardado para próxima rotación:", rotationData)
+      const casSupervisorIds = assignments.CAS_SUPERVISOR || []
+      
+      if (consulateSupervisorRotationKey && typeof window !== "undefined") {
+        // Obtener datos de cada supervisor
+        const consuladoSupervisorId = consulateSupervisorIds[0] || null
+        const cas1SupervisorId = casSupervisorIds[0] || null
+        const cas2SupervisorId = casSupervisorIds[1] || null
+        
+        const consuladoSupervisor = consuladoSupervisorId ? employeeMap.get(consuladoSupervisorId) : null
+        const cas1Supervisor = cas1SupervisorId ? employeeMap.get(cas1SupervisorId) : null
+        const cas2Supervisor = cas2SupervisorId ? employeeMap.get(cas2SupervisorId) : null
+        
+        const rotationData = {
+          weekStartDate,
+          // Supervisor de Consulado
+          consuladoSupervisorId,
+          consuladoSupervisorName: consuladoSupervisor ? getEmployeeDisplayName(consuladoSupervisor) : null,
+          // Supervisor CAS 1º puesto
+          cas1SupervisorId,
+          cas1SupervisorName: cas1Supervisor ? getEmployeeDisplayName(cas1Supervisor) : null,
+          // Supervisor CAS 2º puesto
+          cas2SupervisorId,
+          cas2SupervisorName: cas2Supervisor ? getEmployeeDisplayName(cas2Supervisor) : null,
+          savedAt: new Date().toISOString()
         }
+        
+        window.localStorage.setItem(consulateSupervisorRotationKey, JSON.stringify(rotationData))
+        console.log("✅ Supervisores guardados para rotación circular:", {
+          consulado: rotationData.consuladoSupervisorName,
+          cas1: rotationData.cas1SupervisorName,
+          cas2: rotationData.cas2SupervisorName
+        })
       }
     } catch (error) {
       console.error("No se pudo preparar el snapshot del rol:", error)
@@ -5895,12 +6045,6 @@ export default function GeneradorRolPage() {
               </div>
             </div>
 
-            {pendingEmployees > 0 ? (
-              <p className="text-sm font-medium text-amber-600">
-                {pendingEmployees} colaborador(es) siguen pendientes de asignación en el rol semanal.
-              </p>
-            ) : null}
-
             {slotBalance < 0 ? (
               <Alert variant="destructive">
                 <AlertTitle>Exceso de puestos configurados</AlertTitle>
@@ -5908,21 +6052,7 @@ export default function GeneradorRolPage() {
                   Reduce {Math.abs(slotBalance)} puesto(s) para coincidir con los {activeEmployeeCount} colaboradores activos.
                 </AlertDescription>
               </Alert>
-            ) : slotBalance > 0 ? (
-              <Alert>
-                <AlertTitle>Personal pendiente por ubicar</AlertTitle>
-                <AlertDescription>
-                  Configura {slotBalance} puesto(s) adicional(es) y vuelve a ejecutar la asignación automática para cubrir a todo el equipo.
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <Alert className="border-slate-200">
-                <AlertTitle>Cupos equilibrados</AlertTitle>
-                <AlertDescription>
-                  Los puestos configurados coinciden con el número de empleados activos.
-                </AlertDescription>
-              </Alert>
-            )}
+            ) : null}
 
             <div className="space-y-2">
               <p className="text-xs uppercase text-muted-foreground">Asignaciones de atributos</p>
@@ -6022,8 +6152,30 @@ export default function GeneradorRolPage() {
                         </p>
                         <p className="text-xs text-muted-foreground">Turno: {role.shiftName}</p>
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        Guardado el {new Date(role.createdAt).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}
+                      <div className="flex flex-col md:flex-row items-start md:items-center gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          Guardado el {new Date(role.createdAt).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-indigo-600 hover:text-indigo-700"
+                            onClick={() => handleSetAsLastRole(role.id)}
+                          >
+                            <Clock className="mr-1 h-3 w-3" /> Marcar como último
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handleDeleteRole(role.id)}
+                          >
+                            <Trash2 className="mr-1 h-3 w-3" /> Eliminar
+                          </Button>
+                        </div>
                       </div>
                     </div>
 
@@ -6148,7 +6300,7 @@ export default function GeneradorRolPage() {
           <DialogHeader>
             <DialogTitle>Configurar rol de comidas</DialogTitle>
             <DialogDescription>
-              Define bloques de 30 minutos, capacidad por unidad y colaboradores fijos para cada horario.
+              Define bloques de 1 hora con capacidad específica por área (Operación y Pick & Pack). Puedes asignar colaboradores fijos o dejar que el sistema los distribuya aleatoriamente.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -6164,7 +6316,7 @@ export default function GeneradorRolPage() {
                 <p className="text-xs uppercase text-muted-foreground">Bloques configurados</p>
                 <p className="text-xl font-semibold text-slate-800">{mealSlotDrafts.length}</p>
                 <p className="text-[11px] text-muted-foreground">
-                  Agrega bloques de 30 minutos con cupos personalizados.
+                  Agrega bloques de 1 hora con capacidad específica por área.
                 </p>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
@@ -6302,11 +6454,14 @@ export default function GeneradorRolPage() {
                           <Badge variant="outline">
                             {slot.startTime} - {slot.endTime}
                           </Badge>
-                          <Badge variant="outline">Cupo aleatorio {slot.capacity}</Badge>
-                          <Badge variant="outline">
-                            {slot.appliesTo
-                              .map((unitId) => MEAL_UNIT_OPTIONS.find((unit) => unit.id === unitId)?.label || unitId)
-                              .join(" / ")}
+                          <Badge variant="outline" className="bg-emerald-50 border-emerald-200 text-emerald-700">
+                            Operación: {slot.operationCapacity ?? 0}
+                          </Badge>
+                          <Badge variant="outline" className="bg-blue-50 border-blue-200 text-blue-700">
+                            P&P: {slot.pickpackCapacity ?? 0}
+                          </Badge>
+                          <Badge variant="outline" className="font-semibold">
+                            Total: {(slot.operationCapacity ?? 0) + (slot.pickpackCapacity ?? 0)}
                           </Badge>
                         </div>
 
@@ -6358,6 +6513,53 @@ export default function GeneradorRolPage() {
                             <p className="text-[11px] text-muted-foreground">
                               El sistema asignará automáticamente hasta esta cantidad de colaboradores cada día.
                             </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 rounded-md border border-indigo-200 bg-indigo-50/50 p-3">
+                          <p className="text-xs font-semibold uppercase text-slate-700">Capacidad por unidad</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Define cuántas personas de cada área saldrán a comer en este bloque horario.
+                          </p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label className="text-xs uppercase text-muted-foreground">
+                                Operación General
+                              </Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                placeholder="Ej: 2"
+                                value={slot.operationCapacity ?? 0}
+                                onChange={(event) => handleMealSlotOperationCapacityChange(slot.id, event.target.value)}
+                              />
+                              <p className="text-[10px] text-muted-foreground">
+                                Personas de Operación que salen en este horario
+                              </p>
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-xs uppercase text-muted-foreground">
+                                Pick & Pack
+                              </Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                placeholder="Ej: 2"
+                                value={slot.pickpackCapacity ?? 0}
+                                onChange={(event) => handleMealSlotPickpackCapacityChange(slot.id, event.target.value)}
+                              />
+                              <p className="text-[10px] text-muted-foreground">
+                                Personas de P&P que salen en este horario
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white p-2">
+                            <Badge variant="secondary" className="font-semibold">
+                              Total: {(slot.operationCapacity ?? 0) + (slot.pickpackCapacity ?? 0)} personas
+                            </Badge>
+                            <span className="text-[10px] text-muted-foreground">
+                              Se asignarán aleatoriamente cada día
+                            </span>
                           </div>
                         </div>
 

@@ -841,7 +841,6 @@ export async function getVacationRequests(officeId: string): Promise<VacationReq
     const supabase = createClientSupabaseClient()
     
     // Mapear el office ID del frontend al UUID de la base de datos
-    const { mapOfficeIdToUUID } = await import('../utils/office-mapping')
     const realOfficeId = mapOfficeIdToUUID(officeId)
     
     console.log(`🔍 Vacation requests mapping: ${officeId} → ${realOfficeId}`)

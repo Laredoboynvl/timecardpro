@@ -26,6 +26,7 @@ import {
   Clock,
   UserCheck,
   FileText,
+  ClipboardList,
   ChevronRight,
   Trash2,
   AlertTriangle
@@ -326,6 +327,15 @@ export default function DashboardPage() {
       icon: Calendar,
       href: `/oficina/${office.code}/asistencia`,
       color: 'bg-blue-500',
+      available: true,
+      isLink: true
+    },
+    {
+      title: 'Generador de Rol',
+      description: 'Asignar empleados a puestos CAS y Consulado',
+      icon: ClipboardList,
+      href: `/oficina/${office.code}/generador-rol`,
+      color: 'bg-indigo-500',
       available: true,
       isLink: true
     },

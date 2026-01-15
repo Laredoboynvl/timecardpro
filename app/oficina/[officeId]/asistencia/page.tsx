@@ -522,6 +522,13 @@ export default function AsistenciaPage() {
       return
     }
 
+    console.log("🔵 handleDirectAttendanceClick iniciado:", {
+      employeeId,
+      date: date.toISOString().split('T')[0],
+      selectedType: selectedAttendanceType,
+      officeCode: office?.code
+    })
+
     // Si es "Horas Extra", abrir modal para capturar horas
     if (selectedAttendanceType.code === 'HE') {
       setSelectedCellForHours({ employeeId, date })
@@ -530,8 +537,60 @@ export default function AsistenciaPage() {
       return
     }
 
-    // Para otros tipos, procesar directamente
-    await processAttendanceDirectly(employeeId, date, selectedAttendanceType)
+    // Para otros tipos, marcar directamente sin importar estado previo
+    try {
+      const dateString = date.toISOString().split('T')[0]
+      
+      console.log("🔵 Llamando upsertAttendanceRecord con:", {
+        employeeId,
+        officeCode: office!.code,
+        dateString,
+        attendanceTypeId: selectedAttendanceType.id,
+        attendanceTypeCode: selectedAttendanceType.code
+      })
+      
+      const result = await upsertAttendanceRecord(
+        employeeId,
+        office!.code,
+        dateString,
+        selectedAttendanceType.id!
+      )
+      
+      console.log("🔵 Resultado de upsertAttendanceRecord:", {
+        result,
+        hasResult: !!result,
+        resultType: typeof result
+      })
+      
+      if (result) {
+        // Actualizar el mapa local inmediatamente
+        const key = formatDateKey(employeeId, date)
+        const newRecords = new Map(attendanceRecords)
+        newRecords.set(key, result)
+        setAttendanceRecords(newRecords)
+        
+        console.log("✅ Registro guardado y estado actualizado")
+        
+        toast({
+          title: "Asistencia marcada",
+          description: `Marcado como ${selectedAttendanceType.name}`,
+        })
+      } else {
+        console.error("❌ upsertAttendanceRecord devolvió null/undefined")
+        toast({
+          title: "Error al guardar",
+          description: "No se pudo guardar el registro. Verifica la configuración.",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      console.error("❌ Error en handleDirectAttendanceClick:", error)
+      toast({
+        title: "Error al guardar",
+        description: error instanceof Error ? error.message : "Error desconocido",
+        variant: "destructive",
+      })
+    }
   }
 
   // Funciones para selección múltiple por arrastre
@@ -542,6 +601,14 @@ export default function AsistenciaPage() {
         description: "Primero selecciona un tipo de asistencia en el dropdown del header",
         variant: "destructive",
       })
+      return
+    }
+
+    // Si es Horas Extra, no permitir arrastre. Abrir modal de horas y salir.
+    if (selectedAttendanceType.code?.toUpperCase() === 'HE') {
+      setSelectedCellForHours({ employeeId, date })
+      setHoursWorked(8)
+      setShowHoursModal(true)
       return
     }
 
@@ -568,6 +635,9 @@ export default function AsistenciaPage() {
 
   const handleMouseEnter = (employeeId: string, date: Date) => {
     if (!isSelecting || !selectionStart || !selectedAttendanceType) return
+
+    // Bloquear resaltado/arrastre cuando el tipo seleccionado es HE
+    if (selectedAttendanceType.code?.toUpperCase() === 'HE') return
 
     console.log(`📍 Mouse enter en empleado ${employeeId}, fecha ${date.toISOString().split('T')[0]}`)
 
@@ -668,7 +738,7 @@ export default function AsistenciaPage() {
           const thirdLastHyphenIndex = cellKey.lastIndexOf('-', secondLastHyphenIndex - 1)
           
           if (lastHyphenIndex === -1 || secondLastHyphenIndex === -1 || thirdLastHyphenIndex === -1) {
-            console.error(`❌ Formato de cellKey inválido: ${cellKey}`)
+            console.warn(`❌ Formato de cellKey inválido: ${cellKey}`)
             errorCount++
             errors.push(cellKey)
             continue
@@ -682,7 +752,7 @@ export default function AsistenciaPage() {
           // Validar formato de fecha
           const dateRegex = /^\d{4}-\d{2}-\d{2}$/
           if (!dateRegex.test(dateString)) {
-            console.error(`❌ Formato de fecha inválido: ${dateString}`)
+            console.warn(`❌ Formato de fecha inválido: ${dateString}`)
             errorCount++
             errors.push(cellKey)
             continue
@@ -692,7 +762,7 @@ export default function AsistenciaPage() {
           
           // Verificar que la fecha sea válida
           if (isNaN(date.getTime())) {
-            console.error(`❌ Fecha inválida: ${dateString}`)
+            console.warn(`❌ Fecha inválida: ${dateString}`)
             errorCount++
             errors.push(cellKey)
             continue
@@ -704,6 +774,14 @@ export default function AsistenciaPage() {
           let dbResult: DBAttendanceRecord | null = null
           
           if (selectionMode === 'mark') {
+            // Validar que selectedAttendanceType esté definido
+            if (!selectedAttendanceType || !selectedAttendanceType.id) {
+              console.warn(`⚠️ Advertencia: No hay tipo de asistencia seleccionado para ${employeeId}-${dateString}`)
+              errorCount++
+              errors.push(cellKey)
+              continue
+            }
+            
             console.log(`Tipo de asistencia seleccionado:`, {
               id: selectedAttendanceType.id,
               name: selectedAttendanceType.name,
@@ -715,7 +793,7 @@ export default function AsistenciaPage() {
               employeeId,
               office!.code,
               dateString,
-              selectedAttendanceType.id!
+              selectedAttendanceType.id
             )
             result = !!dbResult
           } else if (selectionMode === 'unmark') {
@@ -732,7 +810,7 @@ export default function AsistenciaPage() {
             mode: selectionMode
           })
           
-          if (result === true) { // Si retornó true, fue exitoso
+          if (result === true || (selectionMode === 'mark' && dbResult !== null)) { // Si retornó true o hay un registro válido, fue exitoso
             successCount++
             console.log(`✅ ÉXITO: Registro ${successCount} procesado correctamente`)
             
@@ -742,7 +820,7 @@ export default function AsistenciaPage() {
           } else {
             errorCount++
             errors.push(`${employeeId}-${dateString}`)
-            console.error(`❌ FALLO: Registro falló para ${employeeId}-${dateString}`)
+            console.warn(`⚠️ Advertencia: No se pudo procesar ${employeeId}-${dateString}`)
           }
           
           // Pequeña pausa para evitar saturar la base de datos
@@ -800,18 +878,18 @@ export default function AsistenciaPage() {
           description: `Éxito: ${successCount}, Errores: ${errorCount}`,
           variant: "destructive",
         })
-        console.error("❌ REGISTROS CON ERRORES DETALLADOS:", errors)
+        console.warn("❌ REGISTROS CON ERRORES DETALLADOS:", errors)
         
-        // Log adicional para debugging
-        console.error("=== INFORMACIÓN ADICIONAL PARA DEBUG ===")
-        console.error("Tipo de asistencia seleccionado:", selectedAttendanceType)
-        console.error("Oficina:", office)
-        console.error("Células seleccionadas originales:", Array.from(selectedCells))
-        console.error("Modo de selección:", selectionMode)
+        // Log adicional para debugging (como advertencias para evitar overlay de errores)
+        console.warn("=== INFORMACIÓN ADICIONAL PARA DEBUG ===")
+        console.warn("Tipo de asistencia seleccionado:", selectedAttendanceType)
+        console.warn("Oficina:", office)
+        console.warn("Células seleccionadas originales:", Array.from(selectedCells))
+        console.warn("Modo de selección:", selectionMode)
       }
 
     } catch (error) {
-      console.error("Error general al procesar días:", error)
+  console.error("Error general al procesar días:", error)
       toast({
         title: "Error",
         description: "Error general al procesar la selección múltiple",
@@ -939,7 +1017,7 @@ export default function AsistenciaPage() {
         hasResult: !!result
       })
 
-      if (result) {
+  if (result) {
         // Actualizar el mapa local
         const key = formatDateKey(employeeId, date)
         const newRecords = new Map(attendanceRecords)
@@ -950,8 +1028,8 @@ export default function AsistenciaPage() {
         console.log("=== FIN handleAttendanceTypeSelect (ÉXITO) ===")
         return true
       } else {
-        console.error("❌ upsertAttendanceRecord devolvió null/undefined")
-        console.error("=== FIN handleAttendanceTypeSelect (FALLO - NULL RESULT) ===")
+        console.warn("❌ upsertAttendanceRecord devolvió null/undefined")
+        console.warn("=== FIN handleAttendanceTypeSelect (FALLO - NULL RESULT) ===")
         toast({
           title: "Error al guardar",
           description: "No se pudo guardar el registro. Verifica que las tablas estén configuradas.",
@@ -1413,6 +1491,13 @@ export default function AsistenciaPage() {
                           
                           const isDisabled = isSundayDay || isHoliday
                           const attendanceType = record?.attendance_type as AttendanceType | undefined
+
+                          const getDisplayCode = (code?: string) => {
+                            if (!code) return ''
+                            const c = code.toUpperCase()
+                            if (c === 'ANR') return 'N'
+                            return c
+                          }
                           
                           return (
                             <td 
@@ -1436,18 +1521,17 @@ export default function AsistenciaPage() {
                               ) : (
                                 // Círculo clickeable para días normales
                                 selectedAttendanceType ? (
-                                  // Click directo cuando hay tipo seleccionado
+                                  // Click directo cuando hay tipo seleccionado (sin arrastre)
                                   <button
-                                    onMouseDown={(e) => {
+                                    onClick={(e) => {
                                       e.preventDefault()
-                                      handleMouseDown(employee.id, date)
+                                      handleDirectAttendanceClick(employee.id, date)
                                     }}
-                                    onMouseEnter={() => handleMouseEnter(employee.id, date)}
                                     onDragStart={(e) => e.preventDefault()} // Prevenir drag nativo
                                     style={{
                                       backgroundColor: attendanceType?.color || 'white',
                                       borderColor: attendanceType?.color || '#d1d5db',
-                                      userSelect: 'none', // Prevenir selección de texto
+                                      userSelect: 'none',
                                       WebkitUserSelect: 'none',
                                       MozUserSelect: 'none',
                                       msUserSelect: 'none'
@@ -1455,18 +1539,14 @@ export default function AsistenciaPage() {
                                     className={cn(
                                       "w-8 h-8 rounded-full border-2 transition-all flex items-center justify-center text-xs font-bold",
                                       "hover:scale-110 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1",
-                                      "select-none", // Prevenir selección
+                                      "select-none",
                                       attendanceType
                                         ? `border-2 text-white`
-                                        : "bg-white border-gray-300 hover:border-blue-500 hover:bg-blue-50",
-                                      // Resaltar si está siendo seleccionado
-                                      selectedCells.has(`${employee.id}-${date.toISOString().split('T')[0]}`)
-                                        ? "ring-2 ring-blue-400 ring-offset-1"
-                                        : ""
+                                        : "bg-white border-gray-300 hover:border-blue-500 hover:bg-blue-50"
                                     )}
                                     title={`Marcar como ${selectedAttendanceType.name}`}
                                   >
-                                    {attendanceType?.code || ''}
+                                    {getDisplayCode(attendanceType?.code)}
                                   </button>
                                 ) : (
                                   // Botón simple sin popover cuando no hay tipo seleccionado
@@ -1485,7 +1565,7 @@ export default function AsistenciaPage() {
                                     onClick={() => handleDirectAttendanceClick(employee.id, date)}
                                     title="Hacer clic para marcar (primero selecciona un tipo en el header)"
                                   >
-                                    {attendanceType?.code || ''}
+                                    {getDisplayCode(attendanceType?.code)}
                                   </button>
                                 )
                               )}
